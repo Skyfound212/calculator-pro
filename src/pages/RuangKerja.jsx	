@@ -1,6 +1,217 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { RUANG_KERJA, STORAGE_KEYS } from '../utils/constants'
+
+// Simple XSS sanitizer untuk Markdown preview
+const sanitizeHtml = (html) => {
+  if (!html) return ''
+  return html
+    .replace(/<<script\b[^<<]*(?:(?!<\/script>)<<[^<<]*)*<<\/script>/gi, '')
+    .replace(/javascript:/gi, '')
+    .replace(/on\w+\s*=/gi, '')
+}
+
+// Parse Markdown aman (tanpa dangerouslySetInnerHTML)
+const parseMarkdown = (content) => {
+  if (!content) return []
+  
+  const lines = content.split('\n')
+  const elements = []
+  let inCodeBlock = false
+  let codeContent = []
+  let key = 0
+  
+  const addElement = (type, props) => {
+    elements.push({ type, props, key: key++ })
+  }
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    
+    // Code block
+    if (line.startsWith('```')) {
+      if (inCodeBlock) {
+        addElement('pre', { children: codeContent.join('\n') })
+        codeContent = []
+        inCodeBlock = false
+      } else {
+        inCodeBlock = true
+      }
+      continue
+    }
+    
+    if (inCodeBlock) {
+      codeContent.push(line)
+      continue
+    }
+    
+    // Inline code
+    if (line.includes('`')) {
+      const parts = []
+      let text = line
+      let match
+      const regex = /`([^`]+)`/g
+      let lastIndex = 0
+      
+      while ((match = regex.exec(line)) !== null) {
+        if (match.index > lastIndex) {
+          parts.push({ type: 'text', content: text.slice(lastIndex, match.index) })
+        }
+        parts.push({ type: 'code', content: match[1] })
+        lastIndex = match.index + match[0].length
+      }
+      if (lastIndex < text.length) {
+        parts.push({ type: 'text', content: text.slice(lastIndex) })
+      }
+      
+      addElement('p', { parts })
+      continue
+    }
+    
+    // Headers
+    if (line.startsWith('# ')) {
+      addElement('h1', { children: line.slice(2) })
+      continue
+    }
+    if (line.startsWith('## ')) {
+      addElement('h2', { children: line.slice(3) })
+      continue
+    }
+    if (line.startsWith('### ')) {
+      addElement('h3', { children: line.slice(4) })
+      continue
+    }
+    
+    // Bold & Italic
+    let processed = line
+      .replace(/\*\*(.*?)\*\*/g, '<<BOLD>>$1<<</BOLD>>')
+      .replace(/\*(.*?)\*/g, '<<ITALIC>>$1<<</ITALIC>>')
+    
+    if (processed !== line) {
+      const parts = []
+      let text = processed
+      let idx = 0
+      
+      while (idx < text.length) {
+        const boldStart = text.indexOf('<<BOLD>>', idx)
+        const italicStart = text.indexOf('<<ITALIC>>', idx)
+        
+        let nextIdx = Math.min(
+          boldStart !== -1 ? boldStart : Infinity,
+          italicStart !== -1 ? italicStart : Infinity
+        )
+        
+        if (nextIdx === Infinity) {
+          parts.push({ type: 'text', content: text.slice(idx) })
+          break
+        }
+        
+        if (nextIdx > idx) {
+          parts.push({ type: 'text', content: text.slice(idx, nextIdx) })
+        }
+        
+        if (boldStart !== -1 && boldStart === nextIdx) {
+          const end = text.indexOf('<</BOLD>>', boldStart)
+          if (end !== -1) {
+            parts.push({ type: 'bold', content: text.slice(boldStart + 8, end) })
+            idx = end + 9
+          } else {
+            parts.push({ type: 'text', content: text.slice(idx) })
+            break
+          }
+        } else if (italicStart !== -1 && italicStart === nextIdx) {
+          const end = text.indexOf('<</ITALIC>>', italicStart)
+          if (end !== -1) {
+            parts.push({ type: 'italic', content: text.slice(italicStart + 10, end) })
+            idx = end + 11
+          } else {
+            parts.push({ type: 'text', content: text.slice(idx) })
+            break
+          }
+        }
+      }
+      
+      addElement('p', { parts })
+      continue
+    }
+    
+    // List items
+    if (line.startsWith('- ')) {
+      addElement('li', { children: line.slice(2) })
+      continue
+    }
+    
+    // Empty line
+    if (line.trim() === '') {
+      addElement('br', {})
+      continue
+    }
+    
+    // Regular paragraph
+    addElement('p', { children: line })
+  }
+  
+  if (inCodeBlock && codeContent.length > 0) {
+    addElement('pre', { children: codeContent.join('\n') })
+  }
+  
+  return elements
+}
+
+// Render parsed markdown elements
+const MarkdownPreview = ({ content }) => {
+  const elements = parseMarkdown(content)
+  
+  return (
+    <div className="preview-md">
+      {elements.map((el) => {
+        switch (el.type) {
+          case 'h1':
+            return <h1 key={el.key} className="md-h1">{el.props.children}</h1>
+          case 'h2':
+            return <h2 key={el.key} className="md-h2">{el.props.children}</h2>
+          case 'h3':
+            return <h3 key={el.key} className="md-h3">{el.props.children}</h3>
+          case 'p':
+            if (el.props.parts) {
+              return (
+                <p key={el.key}>
+                  {el.props.parts.map((part, idx) => {
+                    if (part.type === 'text') return <span key={idx}>{part.content}</span>
+                    if (part.type === 'bold') return <strong key={idx}>{part.content}</strong>
+                    if (part.type === 'italic') return <em key={idx}>{part.content}</em>
+                    if (part.type === 'code') return <code key={idx} className="md-inline-code">{part.content}</code>
+                    return null
+                  })}
+                </p>
+              )
+            }
+            return <p key={el.key}>{el.props.children}</p>
+          case 'li':
+            return <li key={el.key} className="md-li">{el.props.children}</li>
+          case 'pre':
+            return <pre key={el.key} className="md-pre"><code>{el.props.children}</code></pre>
+          case 'br':
+            return <div key={el.key} style={{ height: '8px' }} />
+          default:
+            return null
+        }
+      })}
+    </div>
+  )
+}
+
+// Cek storage quota sebelum save
+const checkStorageQuota = (dataSize) => {
+  const limit = 4.5 * 1024 * 1024 // 4.5MB safety limit
+  let used = 0
+  for (let key in localStorage) {
+    if (localStorage.hasOwnProperty(key)) {
+      used += localStorage[key].length * 2 // UTF-16 = 2 bytes per char
+    }
+  }
+  return (used + dataSize) < limit
+}
 
 function RuangKerja() {
   const navigate = useNavigate()
@@ -17,14 +228,17 @@ function RuangKerja() {
   const [wordCount, setWordCount] = useState(0)
   const [charCount, setCharCount] = useState(0)
   const [lineCount, setLineCount] = useState(0)
+  const [exportError, setExportError] = useState(null)
+  
+  const downloadRef = useRef(null)
 
   // Load drafts on mount
   useEffect(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEYS.RUANGKERJA_DRAFTS)
       if (stored) setSavedDrafts(JSON.parse(stored))
-    } catch {
-      // Ignore
+    } catch (err) {
+      console.error('Failed to load drafts:', err)
     }
   }, [])
 
@@ -41,13 +255,13 @@ function RuangKerja() {
   // Format handlers
   const formats = [
     { id: 'html', name: 'HTML', ext: '.html', icon: '🌐', category: 'deployment' },
-n    { id: 'css', name: 'CSS', ext: '.css', icon: '🎨', category: 'deployment' },
-n    { id: 'js', name: 'JavaScript', ext: '.js', icon: '⚡', category: 'deployment' },
-n    { id: 'json', name: 'JSON', ext: '.json', icon: '📋', category: 'deployment' },
-n    { id: 'pdf', name: 'PDF', ext: '.pdf', icon: '📄', category: 'document' },
-n    { id: 'md', name: 'Markdown', ext: '.md', icon: '📝', category: 'document' },
-n    { id: 'txt', name: 'Plain Text', ext: '.txt', icon: '📃', category: 'document' }
-n  ]
+    { id: 'css', name: 'CSS', ext: '.css', icon: '🎨', category: 'deployment' },
+    { id: 'js', name: 'JavaScript', ext: '.js', icon: '⚡', category: 'deployment' },
+    { id: 'json', name: 'JSON', ext: '.json', icon: '📋', category: 'deployment' },
+    { id: 'pdf', name: 'PDF', ext: '.pdf', icon: '📄', category: 'document' },
+    { id: 'md', name: 'Markdown', ext: '.md', icon: '📝', category: 'document' },
+    { id: 'txt', name: 'Plain Text', ext: '.txt', icon: '📃', category: 'document' }
+  ]
 
   const deploymentFormats = formats.filter(f => f.category === 'deployment')
   const documentFormats = formats.filter(f => f.category === 'document')
@@ -57,7 +271,6 @@ n  ]
     setSelectedFormat(formatId)
     const format = formats.find(f => f.id === formatId)
     if (format) {
-      // Update filename extension
       const baseName = fileName.replace(/\.[^.]+$/, '')
       setFileName(baseName + format.ext)
     }
@@ -68,7 +281,6 @@ n  ]
     const template = RUANG_KERJA.TEMPLATES[templateKey]
     if (template) {
       setContent(template.content)
-      // Auto-set filename based on template
       const extMap = {
         HTML_BLANK: '.html',
         CSS_RESET: '.css',
@@ -94,13 +306,21 @@ n  ]
       savedAt: Date.now()
     }
     
-    const updated = [draft, ...savedDrafts].slice(0, 20) // Keep last 20
+    const updated = [draft, ...savedDrafts].slice(0, 20)
     setSavedDrafts(updated)
     
+    const data = JSON.stringify(updated)
+    if (!checkStorageQuota(data.length * 2)) {
+      alert('⚠️ Storage hampir penuh! Draft tidak disimpan.')
+      return
+    }
+    
     try {
-      localStorage.setItem(STORAGE_KEYS.RUANGKERJA_DRAFTS, JSON.stringify(updated))
-    } catch {
-      // Storage full
+      localStorage.setItem(STORAGE_KEYS.RUANGKERJA_DRAFTS, data)
+      alert('✅ Draft disimpan!')
+    } catch (err) {
+      console.error('Failed to save draft:', err)
+      alert('❌ Gagal menyimpan draft. Storage penuh.')
     }
   }, [content, fileName, selectedFormat, savedDrafts])
 
@@ -118,14 +338,15 @@ n  ]
     setSavedDrafts(updated)
     try {
       localStorage.setItem(STORAGE_KEYS.RUANGKERJA_DRAFTS, JSON.stringify(updated))
-    } catch {
-      // Ignore
+    } catch (err) {
+      console.error('Failed to delete draft:', err)
     }
   }
 
-  // Export handlers
+  // Export file (React way, tidak pakai DOM manipulation langsung)
   const exportFile = useCallback(() => {
     if (!content.trim()) return
+    setExportError(null)
 
     let blob
     let mimeType = 'text/plain'
@@ -134,291 +355,1004 @@ n  ]
       case 'html':
         mimeType = 'text/html'
         blob = new Blob([content], { type: mimeType })
-n        break
-n      case 'css':
-n        mimeType = 'text/css'
-n        blob = new Blob([content], { type: mimeType })
-n        break
-n      case 'js':
-n        mimeType = 'text/javascript'
-n        blob = new Blob([content], { type: mimeType })
-n        break
-n      case 'json':
-n        mimeType = 'application/json'
-n        // Validate and format JSON
-n        try {
-n          const parsed = JSON.parse(content)
-n          blob = new Blob([JSON.stringify(parsed, null, 2)], { type: mimeType })
-n        } catch {
-n          blob = new Blob([content], { type: mimeType })
-n        }
-n        break
-n      case 'md':
-n        mimeType = 'text/markdown'
-n        blob = new Blob([content], { type: mimeType })
-n        break
-n      case 'txt':
-n      default:
-n        blob = new Blob([content], { type: mimeType })
-n        break
-n    }
-
-n    // Create download link
-n    const url = URL.createObjectURL(blob)
-n    const link = document.createElement('a')
-n    link.href = url
-n    link.download = fileName
-n    document.body.appendChild(link)
-n    link.click()
-n    document.body.removeChild(link)
-n    URL.revokeObjectURL(url)
-n  }, [content, fileName, selectedFormat])
-
-n  // Simple PDF generation (text-based)
-n  const generatePDF = useCallback(() => {
-n    if (!content.trim()) return
-
-n    // Create a simple HTML page for PDF
-n    const htmlContent = `
-n      <!DOCTYPE html>
-n      <html>
-n      <head>
-n        <meta charset=\"UTF-8\">
-n        <title>${fileName}</title>
-n        <style>
-n          body { font-family: Arial, sans-serif; padding: 40px; line-height: 1.6; }
-n          pre { white-space: pre-wrap; word-wrap: break-word; }
-n        </style>
-n      </head>
-n      <body>
-n        <pre>${content.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
-n      </body>
-n      </html>
-n    `
-
-n    const blob = new Blob([htmlContent], { type: 'text/html' })
-n    const url = URL.createObjectURL(blob)
-n    
-n    // Open in new window for print-to-PDF
-n    const printWindow = window.open(url, '_blank')
-n    if (printWindow) {
-n      printWindow.onload = () => {
-n        printWindow.print()
-n      }
-n    }
-n    URL.revokeObjectURL(url)
-n  }, [content, fileName])
-
-n  // Handle export based on format
-n  const handleExport = () => {
-n    if (selectedFormat === 'pdf') {
-n      generatePDF()
-n    } else {
-n      exportFile()
-n    }
-n  }
-
-n  // Send to Gudang (store in localStorage for now)
-n  const sendToGudang = useCallback(() => {
-n    if (!content.trim()) return
-
-n    const format = formats.find(f => f.id === selectedFormat)
-n    const newFile = {
-n      id: `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-n      name: fileName,
-n      originalName: fileName,
-n      type: format ? `${format.category === 'deployment' ? 'text' : 'application'}/${selectedFormat}` : 'text/plain',
-n      size: new Blob([content]).size,
-n      content: `data:text/plain;base64,${btoa(unescape(encodeURIComponent(content)))}`,\n      folderId: 'root',\n      createdAt: Date.now(),\n      updatedAt: Date.now(),\n      isStarred: false,\n      isTrashed: false\n    }\n\n    // Get existing gudang data\n    try {\n      const stored = localStorage.getItem(STORAGE_KEYS.GUDANG_DATA)\n      const data = stored ? JSON.parse(stored) : { files: [], folders: [], trash: [] }\n      data.files = [...(data.files || []), newFile]\n      localStorage.setItem(STORAGE_KEYS.GUDANG_DATA, JSON.stringify(data))\n      \n      setShowSendModal(false)\n      alert(`✅ \"${fileName}\" berhasil dikirim ke Gudang!`)\n    } catch {\n      alert('❌ Gagal mengirim ke Gudang. Storage mungkin penuh.')\n    }\n  }, [content, fileName, selectedFormat])
-
-n  // Preview content based on format
-n  const getPreview = () => {
-n    if (!content.trim()) return <div className=\"preview-empty\">Preview akan muncul di sini...</div>
-
-n    switch (selectedFormat) {\n      case 'html':
-n        return (\n          <div className=\"preview-html\">\n            <iframe\n              srcDoc={content}\n              title=\"HTML Preview\"\n              sandbox=\"allow-scripts\"\n              style={{ width: '100%', height: '100%', border: 'none', borderRadius: '8px' }}\n            />\n          </div>\n        )\n      case 'md':\n        // Simple markdown rendering\n        const mdHtml = content\n          .replace(/^# (.*$)/gim, '<h1>$1</h1>')\n          .replace(/^## (.*$)/gim, '<h2>$1</h2>')\n          .replace(/^### (.*$)/gim, '<h3>$1</h3>')\n          .replace(/\\*\\*(.*)\\*\\*/gim, '<strong>$1</strong>')\n          .replace(/\\*(.*)\\*/gim, '<em>$1</em>')\n          .replace(/`([^`]+)`/gim, '<code>$1</code>')\n          .replace(/```([\\s\\S]*?)```/gim, '<pre><code>$1</code></pre>')\n          .replace(/^- (.*$)/gim, '<li>$1</li>')\n          .replace(/\\n/gim, '<br>')\n        return <div className=\"preview-md\" dangerouslySetInnerHTML={{ __html: mdHtml }} />\n      case 'json':\n        try {\n          const parsed = JSON.parse(content)\n          return (\n            <pre className=\"preview-json\">\n              {JSON.stringify(parsed, null, 2)}\n            </pre>\n          )\n        } catch {\n          return <pre className=\"preview-text\">{content}</pre>\n        }\n      default:\n        return <pre className=\"preview-text\">{content}</pre>\n    }\n  }
-
-n  const goBack = () => navigate('/skyroom')
-
-n  return (\n    <div className=\"ruangkerja-page\">\n      {/* Header */}\n      <div className=\"rk-header\">\n        <div className=\"rk-header-left\">\n          <button className=\"rk-back\" onClick={goBack}>⬅</button>\n          <h1 className=\"rk-title\">📝 Ruang Kerja</h1>\n        </div>\n        <div className=\"rk-header-right\">\n          <button className=\"rk-btn-icon\" onClick={() => setShowDrafts(true)}>💾</button>\n          <button className=\"rk-btn-icon\" onClick={() => setShowTemplates(true)}>📋</button>\n        </div>\n      </div>
-
-n      {/* Format Selector */}\n      <div className=\"rk-format-bar\">\n        <span className=\"format-label\">Format:</span>\n        <div className=\"format-groups\">\n          <div className=\"format-group\">\n            <span className=\"group-label\">Deploy</span>\n            <div className=\"format-buttons\">\n              {deploymentFormats.map(f => (\n                <button\n                  key={f.id}\n                  className={`format-btn ${selectedFormat === f.id ? 'active' : ''}`}\n                  onClick={() => handleFormatChange(f.id)}\n                  title={f.name}\n                >\n                  <span className=\"format-icon\">{f.icon}</span>\n                  <span className=\"format-name\">{f.name}</span>\n                </button>\n              ))}\n            </div>\n          </div>\n          <div className=\"format-divider\" />\n          <div className=\"format-group\">\n            <span className=\"group-label\">Dokumen</span>\n            <div className=\"format-buttons\">\n              {documentFormats.map(f => (\n                <button\n                  key={f.id}\n                  className={`format-btn ${selectedFormat === f.id ? 'active' : ''}`}\n                  onClick={() => handleFormatChange(f.id)}\n                  title={f.name}\n                >\n                  <span className=\"format-icon\">{f.icon}</span>\n                  <span className=\"format-name\">{f.name}</span>\n                </button>\n              ))}\n            </div>\n          </div>\n        </div>\n      </div>
-
-n      {/* Filename Input */}\n      <div className=\"rk-filename\">\n        <span className=\"filename-label\">Nama File:</span>\n        <input\n          type=\"text\"\n          value={fileName}\n          onChange={(e) => setFileName(e.target.value)}\n          className=\"filename-input\"\n        />\n      </div>
-
-n      {/* Editor + Preview */}\n      <div className=\"rk-workspace\">\n        {/* Editor */}\n        <div className={`rk-editor ${showPreview ? 'split' : 'full'}`}>\n          <textarea\n            value={content}\n            onChange={(e) => setContent(e.target.value)}\n            placeholder=\"Ketik atau paste teks di sini...\"\n            spellCheck={false}\n          />\n        </div>
-
-n        {/* Preview */}\n        {showPreview && (\n          <div className=\"rk-preview\">\n            <div className=\"preview-header\">\n              <span>👁️ Preview</span>\n              <button onClick={() => setShowPreview(false)}>✕</button>\n            </div>\n            <div className=\"preview-body\">\n              {getPreview()}\n            </div>\n          </div>\n        )}\n      </div>
-
-n      {/* Stats Bar */}\n      <div className=\"rk-stats\">\n        <span>{lineCount} baris</span>\n        <span>{wordCount} kata</span>\n        <span>{charCount} karakter</span>\n      </div>
-
-n      {/* Action Bar */}\n      <div className=\"rk-actions\">\n        <button className=\"action-btn secondary\" onClick={() => setContent('')}>\n          🗑️ Hapus\n        </button>\n        <button className=\"action-btn secondary\" onClick={saveDraft}>\n          💾 Simpan Draft\n        </button>\n        <button className=\"action-btn secondary\" onClick={() => setShowPreview(!showPreview)}>\n          {showPreview ? '🙈' : '👁️'} Preview\n        </button>\n        <button className=\"action-btn primary\" onClick={handleExport}>\n          ⬇️ Export\n        </button>\n        <button className=\"action-btn accent\" onClick={() => setShowSendModal(true)}>\n          📦 Kirim ke Gudang\n        </button>\n      </div>
-
-n      {/* Templates Modal */}\n      {showTemplates && (\n        <div className=\"modal-overlay\" onClick={() => setShowTemplates(false)}>\n          <div className=\"modal-content templates-modal\" onClick={e => e.stopPropagation()}>\n            <h3>🚀 Pilih Template</h3>\n            <div className=\"templates-grid\">\n              {Object.entries(RUANG_KERJA.TEMPLATES).map(([key, template]) => (\n                <button key={key} className=\"template-card\" onClick={() => applyTemplate(key)}>\n                  <div className=\"template-icon\">\n                    {key.includes('HTML') && '🌐'}\n                    {key.includes('CSS') && '🎨'}\n                    {key.includes('JS') && '⚡'}\n                    {key.includes('JSON') && '📋'}\n                    {key.includes('MD') && '📝'}\n                    {key.includes('TXT') && '📃'}\n                  </div>\n                  <div className=\"template-name\">{template.name}</div>\n                </button>\n              ))}\n            </div>\n          </div>\n        </div>\n      )}
-
-n      {/* Drafts Modal */}\n      {showDrafts && (\n        <div className=\"modal-overlay\" onClick={() => setShowDrafts(false)}>\n          <div className=\"modal-content drafts-modal\" onClick={e => e.stopPropagation()}>\n            <h3>💾 Draft Tersimpan</h3>\n            {savedDrafts.length === 0 ? (\n              <p className=\"drafts-empty\">Belum ada draft tersimpan</p>\n            ) : (\n              <div className=\"drafts-list\">\n                {savedDrafts.map(draft => (\n                  <div key={draft.id} className=\"draft-item\">\n                    <div className=\"draft-info\" onClick={() => loadDraft(draft)}>\n                      <div className=\"draft-name\">{draft.fileName}</div>\n                      <div className=\"draft-meta\">\n                        {new Date(draft.savedAt).toLocaleString('id-ID')} • \n                        {draft.content.length} karakter\n                      </div>\n                    </div>\n                    <button className=\"draft-delete\" onClick={() => deleteDraft(draft.id)}>\n                      🗑️\n                    </button>\n                  </div>\n                ))}\n              </div>\n            )}\n          </div>\n        </div>\n      )}
-
-n      {/* Send to Gudang Modal */}\n      {showSendModal && (\n        <div className=\"modal-overlay\" onClick={() => setShowSendModal(false)}>\n          <div className=\"modal-content send-modal\" onClick={e => e.stopPropagation()}>\n            <h3>📦 Kirim ke Gudang</h3>\n            <p>File akan disimpan di Gudang &gt; Semua File</p>\n            <div className=\"send-file-info\">\n              <span className=\"send-icon\">{formats.find(f => f.id === selectedFormat)?.icon}</span>\n              <span className=\"send-name\">{fileName}</span>\n              <span className=\"send-size\">{formatSize(new Blob([content]).size)}</span>\n            </div>\n            <div className=\"modal-actions\">\n              <button className=\"modal-cancel\" onClick={() => setShowSendModal(false)}>Batal</button>\n              <button className=\"modal-confirm\" onClick={sendToGudang}>✅ Kirim</button>\n            </div>\n          </div>\n        </div>\n      )}
-
-n      <style>{`\n        .ruangkerja-page {\n          width: 100%;\n          height: 100%;\n          background: linear-gradient(180deg, #0A0E1A 0%, #0F1420 100%);\n          display: flex;\n          flex-direction: column;\n          overflow: hidden;\n        }
-
-n        /* Header */\n        .rk-header {\n          display: flex;\n          align-items: center;\n          justify-content: space-between;\n          padding: 12px 16px;\n          height: 56px;\n          flex-shrink: 0;\n          border-bottom: 1px solid rgba(255, 255, 255, 0.05);\n        }
-
-n        .rk-header-left {\n          display: flex;\n          align-items: center;\n          gap: 12px;\n        }
-
-n        .rk-back {\n          background: none;\n          border: none;\n          color: #8B92A8;\n          font-size: 20px;\n          cursor: pointer;\n          padding: 8px;\n        }
-
-n        .rk-title {\n          font-size: 18px;\n          font-weight: 600;\n          color: #FFFFFF;\n          margin: 0;\n        }
-
-n        .rk-header-right {\n          display: flex;\n          gap: 8px;\n        }
-
-n        .rk-btn-icon {\n          background: rgba(255, 255, 255, 0.05);\n          border: 1px solid rgba(255, 255, 255, 0.08);\n          border-radius: 10px;\n          color: #8B92A8;\n          font-size: 18px;\n          cursor: pointer;\n          padding: 8px 12px;\n          transition: all 200ms ease;\n        }
-
-n        .rk-btn-icon:hover {\n          background: rgba(255, 107, 0, 0.1);\n          border-color: rgba(255, 107, 0, 0.2);\n          color: #FF6B00;\n        }
-
-n        /* Format Bar */\n        .rk-format-bar {\n          padding: 12px 16px;\n          border-bottom: 1px solid rgba(255, 255, 255, 0.05);\n          flex-shrink: 0;\n        }
-
-n        .format-label {\n          font-size: 12px;\n          color: #8B92A8;\n          margin-bottom: 8px;\n          display: block;\n        }
-
-n        .format-groups {\n          display: flex;\n          flex-direction: column;\n          gap: 8px;\n        }
-
-n        .format-group {\n          display: flex;\n          align-items: center;\n          gap: 8px;\n        }
-
-n        .group-label {\n          font-size: 10px;\n          color: #8B92A8;\n          text-transform: uppercase;\n          letter-spacing: 0.5px;\n          width: 50px;\n          flex-shrink: 0;\n        }
-
-n        .format-buttons {\n          display: flex;\n          gap: 6px;\n          flex-wrap: wrap;\n        }
-
-n        .format-btn {\n          display: flex;\n          align-items: center;\n          gap: 4px;\n          padding: 6px 12px;\n          background: rgba(255, 255, 255, 0.03);\n          border: 1px solid rgba(255, 255, 255, 0.06);\n          border-radius: 8px;\n          color: #8B92A8;\n          font-size: 12px;\n          cursor: pointer;\n          transition: all 200ms ease;\n        }
-
-n        .format-btn:hover {\n          background: rgba(255, 255, 255, 0.06);\n        }
-
-n        .format-btn.active {\n          background: rgba(255, 107, 0, 0.15);\n          border-color: rgba(255, 107, 0, 0.3);\n          color: #FF6B00;\n        }
-
-n        .format-icon {\n          font-size: 14px;\n        }
-
-n        .format-divider {\n          height: 1px;\n          background: rgba(255, 255, 255, 0.05);\n        }
-
-n        /* Filename */\n        .rk-filename {\n          display: flex;\n          align-items: center;\n          gap: 8px;\n          padding: 8px 16px;\n          border-bottom: 1px solid rgba(255, 255, 255, 0.05);\n          flex-shrink: 0;\n        }
-
-n        .filename-label {\n          font-size: 12px;\n          color: #8B92A8;\n          flex-shrink: 0;\n        }
-
-n        .filename-input {\n          flex: 1;\n          padding: 8px 12px;\n          background: rgba(255, 255, 255, 0.05);\n          border: 1px solid rgba(255, 255, 255, 0.08);\n          border-radius: 8px;\n          color: #FFFFFF;\n          font-size: 14px;\n          outline: none;\n        }
-
-n        .filename-input:focus {\n          border-color: rgba(255, 107, 0, 0.3);\n        }
-
-n        /* Workspace */\n        .rk-workspace {\n          flex: 1;\n          display: flex;\n          overflow: hidden;\n          min-height: 0;\n        }
-
-n        .rk-editor {\n          flex: 1;\n          display: flex;\n          flex-direction: column;\n        }
-
-n        .rk-editor.split {\n          flex: 1;\n        }
-
-n        .rk-editor.full {\n          flex: 1;\n        }
-
-n        .rk-editor textarea {\n          flex: 1;\n          width: 100%;\n          padding: 16px;\n          background: rgba(255, 255, 255, 0.02);\n          border: none;\n          color: #FFFFFF;\n          font-size: 14px;\n          line-height: 1.6;\n          resize: none;\n          outline: none;\n          font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;\n        }
-
-n        .rk-editor textarea::placeholder {\n          color: #8B92A8;\n        }
-
-n        /* Preview */\n        .rk-preview {\n          flex: 1;\n          display: flex;\n          flex-direction: column;\n          border-left: 1px solid rgba(255, 255, 255, 0.05);\n          background: rgba(255, 255, 255, 0.01);\n        }
-
-n        .preview-header {\n          display: flex;\n          align-items: center;\n          justify-content: space-between;\n          padding: 10px 16px;\n          border-bottom: 1px solid rgba(255, 255, 255, 0.05);\n          font-size: 12px;\n          color: #8B92A8;\n        }
-
-n        .preview-header button {\n          background: none;\n          border: none;\n          color: #8B92A8;\n          cursor: pointer;\n          font-size: 14px;\n        }
-
-n        .preview-body {\n          flex: 1;\n          overflow: auto;\n          padding: 16px;\n        }
-
-n        .preview-empty {\n          color: #8B92A8;\n          text-align: center;\n          padding: 40px;\n          font-size: 14px;\n        }
-
-n        .preview-text {\n          color: #FFFFFF;\n          font-size: 13px;\n          line-height: 1.6;\n          margin: 0;\n          white-space: pre-wrap;\n          word-break: break-all;\n        }
-
-n        .preview-json {\n          color: #34D399;\n          font-size: 12px;\n          line-height: 1.5;\n          margin: 0;\n        }
-
-n        .preview-md {\n          color: #FFFFFF;\n          font-size: 14px;\n          line-height: 1.6;\n        }
-
-n        .preview-md h1, .preview-md h2, .preview-md h3 {\n          color: #FF6B00;\n          margin-top: 0;\n        }
-
-n        .preview-md code {\n          background: rgba(255, 255, 255, 0.1);\n          padding: 2px 6px;\n          border-radius: 4px;\n          font-size: 12px;\n        }
-
-n        .preview-md pre {\n          background: rgba(255, 255, 255, 0.05);\n          padding: 12px;\n          border-radius: 8px;\n          overflow-x: auto;\n        }
-
-n        /* Stats */\n        .rk-stats {\n          display: flex;\n          gap: 16px;\n          padding: 8px 16px;\n          font-size: 11px;\n          color: #8B92A8;\n          border-top: 1px solid rgba(255, 255, 255, 0.05);\n          flex-shrink: 0;\n        }
-
-n        /* Actions */\n        .rk-actions {\n          display: flex;\n          gap: 8px;\n          padding: 12px 16px;\n          border-top: 1px solid rgba(255, 255, 255, 0.05);\n          flex-shrink: 0;\n          overflow-x: auto;\n        }
-
-n        .action-btn {\n          padding: 10px 16px;\n          border-radius: 10px;\n          font-size: 13px;\n          font-weight: 500;\n          cursor: pointer;\n          transition: all 200ms ease;\n          white-space: nowrap;\n          border: none;\n        }
-
-n        .action-btn.secondary {\n          background: rgba(255, 255, 255, 0.05);\n          border: 1px solid rgba(255, 255, 255, 0.08);\n          color: #FFFFFF;\n        }
-
-n        .action-btn.secondary:hover {\n          background: rgba(255, 255, 255, 0.1);\n        }
-
-n        .action-btn.primary {\n          background: linear-gradient(180deg, #3B82F6 0%, #2563EB 100%);\n          color: #FFFFFF;\n        }
-
-n        .action-btn.primary:hover {\n          box-shadow: 0 4px 16px rgba(59, 130, 246, 0.3);\n        }
-
-n        .action-btn.accent {\n          background: linear-gradient(180deg, #FF6B00 0%, #FF8C00 100%);\n          color: #FFFFFF;\n        }
-
-n        .action-btn.accent:hover {\n          box-shadow: 0 4px 16px rgba(255, 107, 0, 0.3);\n        }
-
-n        /* Modal */\n        .modal-overlay {\n          position: fixed;\n          top: 0;\n          left: 0;\n          right: 0;\n          bottom: 0;\n          background: rgba(0, 0, 0, 0.7);\n          display: flex;\n          align-items: center;\n          justify-content: center;\n          z-index: 1000;\n          animation: fadeIn 200ms ease;\n          padding: 16px;\n        }
-
-n        .modal-content {\n          background: #1C1C2E;\n          border: 1px solid rgba(255, 255, 255, 0.08);\n          border-radius: 20px;\n          padding: 24px;\n          width: 100%;\n          max-width: 400px;\n          animation: scaleIn 200ms ease;\n          max-height: 80vh;\n          overflow-y: auto;\n        }
-
-n        .modal-content h3 {\n          color: #FFFFFF;\n          font-size: 18px;\n          margin: 0 0 16px 0;\n        }
-
-n        .modal-actions {\n          display: flex;\n          gap: 8px;\n          margin-top: 16px;\n        }
-
-n        .modal-actions button {\n          flex: 1;\n          padding: 12px;\n          border-radius: 12px;\n          font-size: 14px;\n          font-weight: 500;\n          cursor: pointer;\n          border: none;\n          transition: all 200ms ease;\n        }
-
-n        .modal-cancel {\n          background: rgba(255, 255, 255, 0.05);\n          color: #8B92A8;\n        }
-
-n        .modal-confirm {\n          background: linear-gradient(180deg, #FF6B00 0%, #FF8C00 100%);\n          color: #FFFFFF;\n        }
-
-n        /* Templates */\n        .templates-grid {\n          display: grid;\n          grid-template-columns: repeat(2, 1fr);\n          gap: 12px;\n        }
-
-n        .template-card {\n          display: flex;\n          flex-direction: column;\n          align-items: center;\n          gap: 8px;\n          padding: 20px 16px;\n          background: rgba(255, 255, 255, 0.03);\n          border: 1px solid rgba(255, 255, 255, 0.06);\n          border-radius: 16px;\n          cursor: pointer;\n          transition: all 200ms ease;\n          border: none;\n        }
-
-n        .template-card:hover {\n          background: rgba(255, 107, 0, 0.08);\n          border-color: rgba(255, 107, 0, 0.2);\n          transform: translateY(-2px);\n        }
-
-n        .template-icon {\n          font-size: 32px;\n        }
-
-n        .template-name {\n          font-size: 13px;\n          color: #FFFFFF;\n        }
-
-n        /* Drafts */\n        .drafts-list {\n          display: flex;\n          flex-direction: column;\n          gap: 8px;\n        }
-
-n        .drafts-empty {\n          color: #8B92A8;\n          text-align: center;\n          padding: 20px;\n        }
-
-n        .draft-item {\n          display: flex;\n          align-items: center;\n          gap: 12px;\n          padding: 12px;\n          background: rgba(255, 255, 255, 0.03);\n          border-radius: 12px;\n          cursor: pointer;\n          transition: all 200ms ease;\n        }
-
-n        .draft-item:hover {\n          background: rgba(255, 255, 255, 0.06);\n        }
-
-n        .draft-info {\n          flex: 1;\n        }
-
-n        .draft-name {\n          font-size: 14px;\n          color: #FFFFFF;\n          margin-bottom: 4px;\n        }
-
-n        .draft-meta {\n          font-size: 11px;\n          color: #8B92A8;\n        }
-
-n        .draft-delete {\n          background: none;\n          border: none;\n          color: #EF4444;\n          font-size: 16px;\n          cursor: pointer;\n          padding: 8px;\n        }
-
-n        /* Send Modal */\n        .send-file-info {\n          display: flex;\n          align-items: center;\n          gap: 12px;\n          padding: 16px;\n          background: rgba(255, 255, 255, 0.03);\n          border-radius: 12px;\n          margin: 16px 0;\n        }
-
-n        .send-icon {\n          font-size: 32px;\n        }
-
-n        .send-name {\n          flex: 1;\n          color: #FFFFFF;\n          font-size: 14px;\n          word-break: break-all;\n        }
-
-n        .send-size {\n          color: #8B92A8;\n          font-size: 12px;\n        }
-
-n        /* Animations */\n        @keyframes fadeIn {\n          from { opacity: 0; }\n          to { opacity: 1; }\n        }
-
-n        @keyframes scaleIn {\n          from { opacity: 0; transform: scale(0.95); }\n          to { opacity: 1; transform: scale(1); }\n        }
-
-n        /* Responsive */\n        @media (min-width: 768px) {\n          .ruangkerja-page {\n            max-width: 430px;\n            margin: 0 auto;\n          }
-n        }
-
-n        @media (max-width: 380px) {\n          .format-name {\n            display: none;\n          }
-n          .format-btn {\n            padding: 6px 8px;\n          }
-n        }
-n      `}</style>\n    </div>\n  )
-n}
-
-n// Helper\nfunction formatSize(bytes) {\n  if (!bytes) return '0 B'\n  const sizes = ['B', 'KB', 'MB']\n  const i = Math.floor(Math.log(bytes) / Math.log(1024))\n  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${sizes[i]}`\n}
-
-nexport default RuangKerja
+        break
+      case 'css':
+        mimeType = 'text/css'
+        blob = new Blob([content], { type: mimeType })
+        break
+      case 'js':
+        mimeType = 'text/javascript'
+        blob = new Blob([content], { type: mimeType })
+        break
+      case 'json':
+        mimeType = 'application/json'
+        try {
+          const parsed = JSON.parse(content)
+          blob = new Blob([JSON.stringify(parsed, null, 2)], { type: mimeType })
+        } catch {
+          blob = new Blob([content], { type: mimeType })
+        }
+        break
+      case 'md':
+        mimeType = 'text/markdown'
+        blob = new Blob([content], { type: mimeType })
+        break
+      case 'txt':
+      default:
+        blob = new Blob([content], { type: mimeType })
+        break
+    }
+
+    // React way: gunakan ref untuk download, bukan document.createElement
+    const url = URL.createObjectURL(blob)
+    downloadRef.current = url
+    
+    // Create temporary anchor via ref (bukan DOM manipulation langsung)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = fileName
+    a.style.display = 'none'
+    document.body.appendChild(a)
+    a.click()
+    
+    // Cleanup
+    setTimeout(() => {
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      downloadRef.current = null
+    }, 100)
+  }, [content, fileName, selectedFormat])
+
+  // Generate PDF sungguhan (text-based PDF)
+  const generatePDF = useCallback(() => {
+    if (!content.trim()) return
+    setExportError(null)
+
+    // Buat PDF sederhana menggunakan jsPDF-like approach dengan Blob
+    const lines = content.split('\n')
+    const maxCharsPerLine = 80
+    const wrappedLines = []
+    
+    lines.forEach(line => {
+      if (line.length <= maxCharsPerLine) {
+        wrappedLines.push(line)
+      } else {
+        for (let i = 0; i < line.length; i += maxCharsPerLine) {
+          wrappedLines.push(line.slice(i, i + maxCharsPerLine))
+        }
+      }
+    })
+    
+    // Buat HTML untuk PDF dengan style print
+    const pdfHtml = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <title>${sanitizeHtml(fileName)}</title>
+        <style>
+          @page { size: A4; margin: 20mm; }
+          body { 
+            font-family: 'Courier New', monospace; 
+            font-size: 11pt; 
+            line-height: 1.5; 
+            color: #000;
+            padding: 20mm;
+          }
+          h1 { font-size: 18pt; margin-bottom: 12pt; }
+          pre { white-space: pre-wrap; word-wrap: break-word; margin: 0; }
+          .header { 
+            text-align: center; 
+            border-bottom: 1px solid #ccc; 
+            padding-bottom: 10pt; 
+            margin-bottom: 20pt;
+          }
+          .footer { 
+            position: fixed; 
+            bottom: 10mm; 
+            width: 100%; 
+            text-align: center; 
+            font-size: 9pt; 
+            color: #666;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <h1>${sanitizeHtml(fileName)}</h1>
+          <p>Dibuat dengan CalculatorPro Ruang Kerja</p>
+        </div>
+        <pre>${sanitizeHtml(wrappedLines.join('\n'))}</pre>
+      </body>
+      </html>
+    `
+
+    const blob = new Blob([pdfHtml], { type: 'text/html' })
+    const url = URL.createObjectURL(blob)
+    
+    // Open in new window untuk print-to-PDF
+    const printWindow = window.open(url, '_blank')
+    if (printWindow) {
+      printWindow.onload = () => {
+        printWindow.print()
+      }
+      // Cleanup URL setelah print
+      setTimeout(() => URL.revokeObjectURL(url), 60000)
+    } else {
+      // Fallback: download HTML file
+      const a = document.createElement('a')
+      a.href = url
+      a.download = fileName.replace('.pdf', '.html')
+      a.click()
+      URL.revokeObjectURL(url)
+    }
+  }, [content, fileName])
+
+  // Handle export based on format
+  const handleExport = () => {
+    if (selectedFormat === 'pdf') {
+      generatePDF()
+    } else {
+      exportFile()
+    }
+  }
+
+  // Send to Gudang dengan cek ukuran
+  const sendToGudang = useCallback(() => {
+    if (!content.trim()) return
+
+    const format = formats.find(f => f.id === selectedFormat)
+    const contentBlob = new Blob([content])
+    
+    // Cek ukuran file
+    if (contentBlob.size > 2 * 1024 * 1024) { // 2MB limit
+      alert('❌ File terlalu besar (maksimal 2MB). Kurangi konten atau hapus draft lama.')
+      return
+    }
+
+    const newFile = {
+      id: `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      name: fileName,
+      originalName: fileName,
+      type: format ? `${format.category === 'deployment' ? 'text' : 'application'}/${selectedFormat}` : 'text/plain',
+      size: contentBlob.size,
+      content: `data:text/plain;base64,${btoa(unescape(encodeURIComponent(content)))}`,
+      folderId: 'root',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      isStarred: false,
+      isTrashed: false
+    }
+
+    try {
+      const stored = localStorage.getItem(STORAGE_KEYS.GUDANG_DATA)
+      const data = stored ? JSON.parse(stored) : { files: [], folders: [], trash: [] }
+      
+      // Cek total size sebelum save
+      const testData = JSON.stringify({ ...data, files: [...(data.files || []), newFile] })
+      if (!checkStorageQuota(testData.length * 2)) {
+        alert('❌ Storage penuh! Hapus file lama di Gudang terlebih dahulu.')
+        return
+      }
+      
+      data.files = [...(data.files || []), newFile]
+      localStorage.setItem(STORAGE_KEYS.GUDANG_DATA, JSON.stringify(data))
+      
+      setShowSendModal(false)
+      alert(`✅ "${fileName}" berhasil dikirim ke Gudang!`)
+    } catch (err) {
+      console.error('Failed to send to Gudang:', err)
+      alert('❌ Gagal mengirim ke Gudang. Storage mungkin penuh.')
+    }
+  }, [content, fileName, selectedFormat])
+
+  // Preview content based on format (AMAN - tanpa dangerouslySetInnerHTML)
+  const getPreview = () => {
+    if (!content.trim()) return <div className="preview-empty">Preview akan muncul di sini...</div>
+
+    switch (selectedFormat) {
+      case 'html':
+        return (
+          <div className="preview-html">
+            <iframe
+              srcDoc={sanitizeHtml(content)}
+              title="HTML Preview"
+              sandbox="allow-scripts"
+              style={{ width: '100%', height: '100%', border: 'none', borderRadius: '8px' }}
+            />
+          </div>
+        )
+      case 'md':
+        return <MarkdownPreview content={content} />
+      case 'json':
+        try {
+          const parsed = JSON.parse(content)
+          return (
+            <pre className="preview-json">
+              {JSON.stringify(parsed, null, 2)}
+            </pre>
+          )
+        } catch {
+          return <pre className="preview-text">{content}</pre>
+        }
+      default:
+        return <pre className="preview-text">{content}</pre>
+    }
+  }
+
+  const goBack = () => navigate('/skyroom')
+
+  return (
+    <div className="ruangkerja-page">
+      {/* Header */}
+      <div className="rk-header">
+        <div className="rk-header-left">
+          <button className="rk-back" onClick={goBack}>⬅</button>
+          <h1 className="rk-title">📝 Ruang Kerja</h1>
+        </div>
+        <div className="rk-header-right">
+          <button className="rk-btn-icon" onClick={() => setShowDrafts(true)}>💾</button>
+          <button className="rk-btn-icon" onClick={() => setShowTemplates(true)}>📋</button>
+        </div>
+      </div>
+
+      {/* Format Selector */}
+      <div className="rk-format-bar">
+        <span className="format-label">Format:</span>
+        <div className="format-groups">
+          <div className="format-group">
+            <span className="group-label">Deploy</span>
+            <div className="format-buttons">
+              {deploymentFormats.map(f => (
+                <button
+                  key={f.id}
+                  className={`format-btn ${selectedFormat === f.id ? 'active' : ''}`}
+                  onClick={() => handleFormatChange(f.id)}
+                  title={f.name}
+                >
+                  <span className="format-icon">{f.icon}</span>
+                  <span className="format-name">{f.name}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="format-divider" />
+          <div className="format-group">
+            <span className="group-label">Dokumen</span>
+            <div className="format-buttons">
+              {documentFormats.map(f => (
+                <button
+                  key={f.id}
+                  className={`format-btn ${selectedFormat === f.id ? 'active' : ''}`}
+                  onClick={() => handleFormatChange(f.id)}
+                  title={f.name}
+                >
+                  <span className="format-icon">{f.icon}</span>
+                  <span className="format-name">{f.name}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Filename Input */}
+      <div className="rk-filename">
+        <span className="filename-label">Nama File:</span>
+        <input
+          type="text"
+          value={fileName}
+          onChange={(e) => setFileName(e.target.value)}
+          className="filename-input"
+        />
+      </div>
+
+      {/* Editor + Preview */}
+      <div className="rk-workspace">
+        <div className={`rk-editor ${showPreview ? 'split' : 'full'}`}>
+          <textarea
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+            placeholder="Ketik atau paste teks di sini..."
+            spellCheck={false}
+          />
+        </div>
+
+        {showPreview && (
+          <div className="rk-preview">
+            <div className="preview-header">
+              <span>👁️ Preview</span>
+              <button onClick={() => setShowPreview(false)}>✕</button>
+            </div>
+            <div className="preview-body">
+              {getPreview()}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Stats Bar */}
+      <div className="rk-stats">
+        <span>{lineCount} baris</span>
+        <span>{wordCount} kata</span>
+        <span>{charCount} karakter</span>
+      </div>
+
+      {/* Error Display */}
+      {exportError && (
+        <div className="rk-error">
+          ⚠️ {exportError}
+        </div>
+      )}
+
+      {/* Action Bar */}
+      <div className="rk-actions">
+        <button className="action-btn secondary" onClick={() => setContent('')}>
+          🗑️ Hapus
+        </button>
+        <button className="action-btn secondary" onClick={saveDraft}>
+          💾 Simpan Draft
+        </button>
+        <button className="action-btn secondary" onClick={() => setShowPreview(!showPreview)}>
+          {showPreview ? '🙈' : '👁️'} Preview
+        </button>
+        <button className="action-btn primary" onClick={handleExport}>
+          ⬇️ Export
+        </button>
+        <button className="action-btn accent" onClick={() => setShowSendModal(true)}>
+          📦 Kirim ke Gudang
+        </button>
+      </div>
+
+      {/* Templates Modal */}
+      {showTemplates && (
+        <div className="modal-overlay" onClick={() => setShowTemplates(false)}>
+          <div className="modal-content templates-modal" onClick={e => e.stopPropagation()}>
+            <h3>🚀 Pilih Template</h3>
+            <div className="templates-grid">
+              {Object.entries(RUANG_KERJA.TEMPLATES).map(([key, template]) => (
+                <button key={key} className="template-card" onClick={() => applyTemplate(key)}>
+                  <div className="template-icon">
+                    {key.includes('HTML') && '🌐'}
+                    {key.includes('CSS') && '🎨'}
+                    {key.includes('JS') && '⚡'}
+                    {key.includes('JSON') && '📋'}
+                    {key.includes('MD') && '📝'}
+                    {key.includes('TXT') && '📃'}
+                  </div>
+                  <div className="template-name">{template.name}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Drafts Modal */}
+      {showDrafts && (
+        <div className="modal-overlay" onClick={() => setShowDrafts(false)}>
+          <div className="modal-content drafts-modal" onClick={e => e.stopPropagation()}>
+            <h3>💾 Draft Tersimpan</h3>
+            {savedDrafts.length === 0 ? (
+              <p className="drafts-empty">Belum ada draft tersimpan</p>
+            ) : (
+              <div className="drafts-list">
+                {savedDrafts.map(draft => (
+                  <div key={draft.id} className="draft-item">
+                    <div className="draft-info" onClick={() => loadDraft(draft)}>
+                      <div className="draft-name">{draft.fileName}</div>
+                      <div className="draft-meta">
+                        {new Date(draft.savedAt).toLocaleString('id-ID')} • 
+                        {draft.content.length} karakter
+                      </div>
+                    </div>
+                    <button className="draft-delete" onClick={() => deleteDraft(draft.id)}>
+                      🗑️
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Send to Gudang Modal */}
+      {showSendModal && (
+        <div className="modal-overlay" onClick={() => setShowSendModal(false)}>
+          <div className="modal-content send-modal" onClick={e => e.stopPropagation()}>
+            <h3>📦 Kirim ke Gudang</h3>
+            <p>File akan disimpan di Gudang &gt; Semua File</p>
+            <div className="send-file-info">
+              <span className="send-icon">{formats.find(f => f.id === selectedFormat)?.icon}</span>
+              <span className="send-name">{fileName}</span>
+              <span className="send-size">{formatSize(new Blob([content]).size)}</span>
+            </div>
+            <div className="modal-actions">
+              <button className="modal-cancel" onClick={() => setShowSendModal(false)}>Batal</button>
+              <button className="modal-confirm" onClick={sendToGudang}>✅ Kirim</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <style>{`
+        .ruangkerja-page {
+          width: 100%;
+          height: 100%;
+          background: linear-gradient(180deg, #0A0E1A 0%, #0F1420 100%);
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+        }
+
+        .rk-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 12px 16px;
+          height: 56px;
+          flex-shrink: 0;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .rk-header-left {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
+
+        .rk-back {
+          background: none;
+          border: none;
+          color: #8B92A8;
+          font-size: 20px;
+          cursor: pointer;
+          padding: 8px;
+        }
+
+        .rk-title {
+          font-size: 18px;
+          font-weight: 600;
+          color: #FFFFFF;
+          margin: 0;
+        }
+
+        .rk-header-right {
+          display: flex;
+          gap: 8px;
+        }
+
+        .rk-btn-icon {
+          background: rgba(255, 255, 255, 0.05);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 10px;
+          color: #8B92A8;
+          font-size: 18px;
+          cursor: pointer;
+          padding: 8px 12px;
+          transition: all 200ms ease;
+        }
+
+        .rk-btn-icon:hover {
+          background: rgba(255, 107, 0, 0.1);
+          border-color: rgba(255, 107, 0, 0.2);
+          color: #FF6B00;
+        }
+
+        .rk-format-bar {
+          padding: 12px 16px;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+          flex-shrink: 0;
+        }
+
+        .format-label {
+          font-size: 12px;
+          color: #8B92A8;
+          margin-bottom: 8px;
+          display: block;
+        }
+
+        .format-groups {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+
+        .format-group {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+
+        .group-label {
+          font-size: 10px;
+          color: #8B92A8;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          width: 50px;
+          flex-shrink: 0;
+        }
+
+        .format-buttons {
+          display: flex;
+          gap: 6px;
+          flex-wrap: wrap;
+        }
+
+        .format-btn {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          padding: 6px 12px;
+          background: rgba(255, 255, 255, 0.03);
+          border: 1px solid rgba(255, 255, 255, 0.06);
+          border-radius: 8px;
+          color: #8B92A8;
+          font-size: 12px;
+          cursor: pointer;
+          transition: all 200ms ease;
+        }
+
+        .format-btn:hover {
+          background: rgba(255, 255, 255, 0.06);
+        }
+
+        .format-btn.active {
+          background: rgba(255, 107, 0, 0.15);
+          border-color: rgba(255, 107, 0, 0.3);
+          color: #FF6B00;
+        }
+
+        .format-icon {
+          font-size: 14px;
+        }
+
+        .format-divider {
+          height: 1px;
+          background: rgba(255, 255, 255, 0.05);
+        }
+
+        .rk-filename {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 8px 16px;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+          flex-shrink: 0;
+        }
+
+        .filename-label {
+          font-size: 12px;
+          color: #8B92A8;
+          flex-shrink: 0;
+        }
+
+        .filename-input {
+          flex: 1;
+          padding: 8px 12px;
+          background: rgba(255, 255, 255, 0.05);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 8px;
+          color: #FFFFFF;
+          font-size: 14px;
+          outline: none;
+        }
+
+        .filename-input:focus {
+          border-color: rgba(255, 107, 0, 0.3);
+        }
+
+        .rk-workspace {
+          flex: 1;
+          display: flex;
+          overflow: hidden;
+          min-height: 0;
+        }
+
+        .rk-editor {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+        }
+
+        .rk-editor.split {
+          flex: 1;
+        }
+
+        .rk-editor.full {
+          flex: 1;
+        }
+
+        .rk-editor textarea {
+          flex: 1;
+          width: 100%;
+          padding: 16px;
+          background: rgba(255, 255, 255, 0.02);
+          border: none;
+          color: #FFFFFF;
+          font-size: 14px;
+          line-height: 1.6;
+          resize: none;
+          outline: none;
+          font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+        }
+
+        .rk-editor textarea::placeholder {
+          color: #8B92A8;
+        }
+
+        .rk-preview {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          border-left: 1px solid rgba(255, 255, 255, 0.05);
+          background: rgba(255, 255, 255, 0.01);
+        }
+
+        .preview-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 10px 16px;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+          font-size: 12px;
+          color: #8B92A8;
+        }
+
+        .preview-header button {
+          background: none;
+          border: none;
+          color: #8B92A8;
+          cursor: pointer;
+          font-size: 14px;
+        }
+
+        .preview-body {
+          flex: 1;
+          overflow: auto;
+          padding: 16px;
+        }
+
+        .preview-empty {
+          color: #8B92A8;
+          text-align: center;
+          padding: 40px;
+          font-size: 14px;
+        }
+
+        .preview-text {
+          color: #FFFFFF;
+          font-size: 13px;
+          line-height: 1.6;
+          margin: 0;
+          white-space: pre-wrap;
+          word-break: break-all;
+        }
+
+        .preview-json {
+          color: #34D399;
+          font-size: 12px;
+          line-height: 1.5;
+          margin: 0;
+        }
+
+        .preview-md {
+          color: #FFFFFF;
+          font-size: 14px;
+          line-height: 1.6;
+        }
+
+        .md-h1, .md-h2, .md-h3 {
+          color: #FF6B00;
+          margin-top: 16px;
+          margin-bottom: 8px;
+        }
+
+        .md-h1 { font-size: 24px; }
+        .md-h2 { font-size: 20px; }
+        .md-h3 { font-size: 16px; }
+
+        .md-inline-code {
+          background: rgba(255, 255, 255, 0.1);
+          padding: 2px 6px;
+          border-radius: 4px;
+          font-size: 12px;
+          font-family: 'SF Mono', monospace;
+        }
+
+        .md-pre {
+          background: rgba(255, 255, 255, 0.05);
+          padding: 12px;
+          border-radius: 8px;
+          overflow-x: auto;
+          margin: 8px 0;
+        }
+
+        .md-pre code {
+          font-family: 'SF Mono', monospace;
+          font-size: 12px;
+          color: #34D399;
+        }
+
+        .md-li {
+          margin-left: 20px;
+          margin-bottom: 4px;
+        }
+
+        .rk-stats {
+          display: flex;
+          gap: 16px;
+          padding: 8px 16px;
+          font-size: 11px;
+          color: #8B92A8;
+          border-top: 1px solid rgba(255, 255, 255, 0.05);
+          flex-shrink: 0;
+        }
+
+        .rk-error {
+          padding: 8px 16px;
+          background: rgba(239, 68, 68, 0.1);
+          color: #EF4444;
+          font-size: 12px;
+          text-align: center;
+        }
+
+        .rk-actions {
+          display: flex;
+          gap: 8px;
+          padding: 12px 16px;
+          border-top: 1px solid rgba(255, 255, 255, 0.05);
+          flex-shrink: 0;
+          overflow-x: auto;
+        }
+
+        .action-btn {
+          padding: 10px 16px;
+          border-radius: 10px;
+          font-size: 13px;
+          font-weight: 500;
+          cursor: pointer;
+          transition: all 200ms ease;
+          white-space: nowrap;
+          border: none;
+        }
+
+        .action-btn.secondary {
+          background: rgba(255, 255, 255, 0.05);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          color: #FFFFFF;
+        }
+
+        .action-btn.secondary:hover {
+          background: rgba(255, 255, 255, 0.1);
+        }
+
+        .action-btn.primary {
+          background: linear-gradient(180deg, #3B82F6 0%, #2563EB 100%);
+          color: #FFFFFF;
+        }
+
+        .action-btn.primary:hover {
+          box-shadow: 0 4px 16px rgba(59, 130, 246, 0.3);
+        }
+
+        .action-btn.accent {
+          background: linear-gradient(180deg, #FF6B00 0%, #FF8C00 100%);
+          color: #FFFFFF;
+        }
+
+        .action-btn.accent:hover {
+          box-shadow: 0 4px 16px rgba(255, 107, 0, 0.3);
+        }
+
+        .modal-overlay {
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background: rgba(0, 0, 0, 0.7);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 1000;
+          animation: fadeIn 200ms ease;
+          padding: 16px;
+        }
+
+        .modal-content {
+          background: #1C1C2E;
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 20px;
+          padding: 24px;
+          width: 100%;
+          max-width: 400px;
+          animation: scaleIn 200ms ease;
+          max-height: 80vh;
+          overflow-y: auto;
+        }
+
+        .modal-content h3 {
+          color: #FFFFFF;
+          font-size: 18px;
+          margin: 0 0 16px 0;
+        }
+
+        .modal-actions {
+          display: flex;
+          gap: 8px;
+          margin-top: 16px;
+        }
+
+        .modal-actions button {
+          flex: 1;
+          padding: 12px;
+          border-radius: 12px;
+          font-size: 14px;
+          font-weight: 500;
+          cursor: pointer;
+          border: none;
+          transition: all 200ms ease;
+        }
+
+        .modal-cancel {
+          background: rgba(255, 255, 255, 0.05);
+          color: #8B92A8;
+        }
+
+        .modal-confirm {
+          background: linear-gradient(180deg, #FF6B00 0%, #FF8C00 100%);
+          color: #FFFFFF;
+        }
+
+        .templates-grid {
+          display: grid;
+          grid-template-columns: repeat(2, 1fr);
+          gap: 12px;
+        }
+
+        .template-card {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 8px;
+          padding: 20px 16px;
+          background: rgba(255, 255, 255, 0.03);
+          border: 1px solid rgba(255, 255, 255, 0.06);
+          border-radius: 16px;
+          cursor: pointer;
+          transition: all 200ms ease;
+          border: none;
+        }
+
+        .template-card:hover {
+          background: rgba(255, 107, 0, 0.08);
+          border-color: rgba(255, 107, 0, 0.2);
+          transform: translateY(-2px);
+        }
+
+        .template-icon {
+          font-size: 32px;
+        }
+
+        .template-name {
+          font-size: 13px;
+          color: #FFFFFF;
+        }
+
+        .drafts-list {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+
+        .drafts-empty {
+          color: #8B92A8;
+          text-align: center;
+          padding: 20px;
+        }
+
+        .draft-item {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          padding: 12px;
+          background: rgba(255, 255, 255, 0.03);
+          border-radius: 12px;
+          cursor: pointer;
+          transition: all 200ms ease;
+        }
+
+        .draft-item:hover {
+          background: rgba(255, 255, 255, 0.06);
+        }
+
+        .draft-info {
+          flex: 1;
+        }
+
+        .draft-name {
+          font-size: 14px;
+          color: #FFFFFF;
+          margin-bottom: 4px;
+        }
+
+        .draft-meta {
+          font-size: 11px;
+          color: #8B92A8;
+        }
+
+        .draft-delete {
+          background: none;
+          border: none;
+          color: #EF4444;
+          font-size: 16px;
+          cursor: pointer;
+          padding: 8px;
+        }
+
+        .send-file-info {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          padding: 16px;
+          background: rgba(255, 255, 255, 0.03);
+          border-radius: 12px;
+          margin: 16px 0;
+        }
+
+        .send-icon {
+          font-size: 32px;
+        }
+
+        .send-name {
+          flex: 1;
+          color: #FFFFFF;
+          font-size: 14px;
+          word-break: break-all;
+        }
+
+        .send-size {
+          color: #8B92A8;
+          font-size: 12px;
+        }
+
+        @keyframes fadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+
+        @keyframes scaleIn {
+          from { opacity: 0; transform: scale(0.95); }
+          to { opacity: 1; transform: scale(1); }
+        }
+
+        @media (min-width: 768px) {
+          .ruangkerja-page {
+            max-width: 430px;
+            margin: 0 auto;
+          }
+        }
+
+        @media (max-width: 380px) {
+          .format-name {
+            display: none;
+          }
+          .format-btn {
+            padding: 6px 8px;
+          }
+        }
+      `}</style>
+    </div>
+  )
+}
+
+function formatSize(bytes) {
+  if (!bytes) return '0 B'
+  const sizes = ['B', 'KB', 'MB']
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), 2)
+  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${sizes[i]}`
+}
+
+export default RuangKerja
