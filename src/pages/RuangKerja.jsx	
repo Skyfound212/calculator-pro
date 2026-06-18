@@ -2,7 +2,44 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { RUANG_KERJA, STORAGE_KEYS } from '../utils/constants'
 
-// Simple XSS sanitizer untuk Markdown preview
+// ============================================
+// IDB HELPERS (sama seperti Gudang.jsx)
+// ============================================
+const openDB = () => {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open('CalculatorProDB', 1)
+    request.onerror = () => reject(request.error)
+    request.onsuccess = () => resolve(request.result)
+    request.onupgradeneeded = (event) => {
+      const db = event.target.result
+      if (!db.objectStoreNames.contains('files')) {
+        db.createObjectStore('files', { keyPath: 'id' })
+      }
+      if (!db.objectStoreNames.contains('folders')) {
+        db.createObjectStore('folders', { keyPath: 'id' })
+      }
+    }
+  })
+}
+
+const idbRequest = (request) => {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result)
+    request.onerror = () => reject(request.error)
+  })
+}
+
+const transactionComplete = (tx) => {
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error)
+    tx.onabort = () => reject(new Error('Transaction aborted'))
+  })
+}
+
+// ============================================
+// XSS SANITIZER
+// ============================================
 const sanitizeHtml = (html) => {
   if (!html) return ''
   return html
@@ -11,7 +48,9 @@ const sanitizeHtml = (html) => {
     .replace(/on\w+\s*=/gi, '')
 }
 
-// Parse Markdown aman (tanpa dangerouslySetInnerHTML)
+// ============================================
+// MARKDOWN PARSER (Bug 6A fix)
+// ============================================
 const parseMarkdown = (content) => {
   if (!content) return []
   
@@ -82,7 +121,7 @@ const parseMarkdown = (content) => {
       continue
     }
     
-    // Bold & Italic
+    // Bold & Italic (Bug 6A fix - regex yang benar)
     let processed = line
       .replace(/\*\*(.*?)\*\*/g, '<<BOLD>>$1<<</BOLD>>')
       .replace(/\*(.*?)\*/g, '<<ITALIC>>$1<<</ITALIC>>')
@@ -343,7 +382,7 @@ function RuangKerja() {
     }
   }
 
-  // Export file (React way, tidak pakai DOM manipulation langsung)
+  // Export file
   const exportFile = useCallback(() => {
     if (!content.trim()) return
     setExportError(null)
@@ -383,11 +422,9 @@ function RuangKerja() {
         break
     }
 
-    // React way: gunakan ref untuk download, bukan document.createElement
     const url = URL.createObjectURL(blob)
     downloadRef.current = url
     
-    // Create temporary anchor via ref (bukan DOM manipulation langsung)
     const a = document.createElement('a')
     a.href = url
     a.download = fileName
@@ -395,7 +432,6 @@ function RuangKerja() {
     document.body.appendChild(a)
     a.click()
     
-    // Cleanup
     setTimeout(() => {
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
@@ -403,12 +439,11 @@ function RuangKerja() {
     }, 100)
   }, [content, fileName, selectedFormat])
 
-  // Generate PDF sungguhan (text-based PDF)
+  // Generate PDF
   const generatePDF = useCallback(() => {
     if (!content.trim()) return
     setExportError(null)
 
-    // Buat PDF sederhana menggunakan jsPDF-like approach dengan Blob
     const lines = content.split('\n')
     const maxCharsPerLine = 80
     const wrappedLines = []
@@ -423,7 +458,6 @@ function RuangKerja() {
       }
     })
     
-    // Buat HTML untuk PDF dengan style print
     const pdfHtml = `
       <!DOCTYPE html>
       <html>
@@ -447,14 +481,6 @@ function RuangKerja() {
             padding-bottom: 10pt; 
             margin-bottom: 20pt;
           }
-          .footer { 
-            position: fixed; 
-            bottom: 10mm; 
-            width: 100%; 
-            text-align: center; 
-            font-size: 9pt; 
-            color: #666;
-          }
         </style>
       </head>
       <body>
@@ -470,16 +496,13 @@ function RuangKerja() {
     const blob = new Blob([pdfHtml], { type: 'text/html' })
     const url = URL.createObjectURL(blob)
     
-    // Open in new window untuk print-to-PDF
     const printWindow = window.open(url, '_blank')
     if (printWindow) {
       printWindow.onload = () => {
         printWindow.print()
       }
-      // Cleanup URL setelah print
       setTimeout(() => URL.revokeObjectURL(url), 60000)
     } else {
-      // Fallback: download HTML file
       const a = document.createElement('a')
       a.href = url
       a.download = fileName.replace('.pdf', '.html')
@@ -497,15 +520,16 @@ function RuangKerja() {
     }
   }
 
-  // Send to Gudang dengan cek ukuran
-  const sendToGudang = useCallback(() => {
+  // ============================================
+  // SEND TO GUDANG (Bug 6C fix - tulis ke IndexedDB)
+  // ============================================
+  const sendToGudang = useCallback(async () => {
     if (!content.trim()) return
 
     const format = formats.find(f => f.id === selectedFormat)
     const contentBlob = new Blob([content])
     
-    // Cek ukuran file
-    if (contentBlob.size > 2 * 1024 * 1024) { // 2MB limit
+    if (contentBlob.size > 2 * 1024 * 1024) {
       alert('❌ File terlalu besar (maksimal 2MB). Kurangi konten atau hapus draft lama.')
       return
     }
@@ -525,28 +549,38 @@ function RuangKerja() {
     }
 
     try {
-      const stored = localStorage.getItem(STORAGE_KEYS.GUDANG_DATA)
-      const data = stored ? JSON.parse(stored) : { files: [], folders: [], trash: [] }
+      // Bug 6C fix: Tulis ke IndexedDB, bukan localStorage
+      const db = await openDB()
+      const tx = db.transaction(['files'], 'readwrite')
+      const filesStore = tx.objectStore('files')
       
-      // Cek total size sebelum save
-      const testData = JSON.stringify({ ...data, files: [...(data.files || []), newFile] })
-      if (!checkStorageQuota(testData.length * 2)) {
-        alert('❌ Storage penuh! Hapus file lama di Gudang terlebih dahulu.')
+      // Get existing files
+      const existingFiles = await idbRequest(filesStore.getAll())
+      
+      // Check total size
+      const totalSize = existingFiles.reduce((sum, f) => sum + (f.size || 0), 0) + newFile.size
+      if (totalSize > 10 * 1024 * 1024) {
+        alert('❌ Total storage melebihi 10MB. Hapus file lama di Gudang terlebih dahulu.')
+        db.close()
         return
       }
       
-      data.files = [...(data.files || []), newFile]
-      localStorage.setItem(STORAGE_KEYS.GUDANG_DATA, JSON.stringify(data))
+      // Add new file
+      await idbRequest(filesStore.put(newFile))
+      
+      // Complete transaction
+      await transactionComplete(tx)
+      db.close()
       
       setShowSendModal(false)
       alert(`✅ "${fileName}" berhasil dikirim ke Gudang!`)
     } catch (err) {
       console.error('Failed to send to Gudang:', err)
-      alert('❌ Gagal mengirim ke Gudang. Storage mungkin penuh.')
+      alert('❌ Gagal mengirim ke Gudang. Coba lagi.')
     }
   }, [content, fileName, selectedFormat])
 
-  // Preview content based on format (AMAN - tanpa dangerouslySetInnerHTML)
+  // Preview content based on format
   const getPreview = () => {
     if (!content.trim()) return <div className="preview-empty">Preview akan muncul di sini...</div>
 
