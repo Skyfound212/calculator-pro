@@ -3,6 +3,14 @@ import { useNavigate } from 'react-router-dom'
 import { useSecretCode } from '../hooks/useSecretCode'
 import { evaluateExpression, formatNumber, memoryOperations, historyManager } from '../utils/calculator'
 
+// Parse number dari display string (handle locale id-ID)
+const parseLocaleNumber = (str) => {
+  // Untuk id-ID: titik = separator ribuan, koma = desimal
+  // Contoh: "1.234,56" → 1234.56
+  const cleaned = str.replace(/\./g, '').replace(',', '.')
+  return parseFloat(cleaned)
+}
+
 function Calculator() {
   const [display, setDisplay] = useState('0')
   const [expression, setExpression] = useState('')
@@ -11,7 +19,9 @@ function Calculator() {
   const [waitingForOperand, setWaitingForOperand] = useState(false)
   const [memory, setMemory] = useState(memoryOperations.get())
   const [showHistory, setShowHistory] = useState(false)
+  const [showMenu, setShowMenu] = useState(false)
   const [history, setHistory] = useState(historyManager.get())
+  const [parenStack, setParenStack] = useState(0)
   
   const { addToBuffer } = useSecretCode()
   const navigate = useNavigate()
@@ -27,11 +37,11 @@ function Calculator() {
     if (waitingForOperand) {
       updateDisplay(num.toString())
       setWaitingForOperand(false)
+      setExpression('') // Clear expression after equals
     } else {
       updateDisplay(display === '0' ? num.toString() : display + num)
     }
     
-    // Add to secret code buffer
     addToBuffer(num.toString())
   }, [display, waitingForOperand, updateDisplay, addToBuffer])
 
@@ -40,23 +50,72 @@ function Calculator() {
     if (waitingForOperand) {
       updateDisplay('0.')
       setWaitingForOperand(false)
+      setExpression('')
       addToBuffer('.')
       return
     }
     
-    if (!display.includes('.')) {
-      updateDisplay(display + '.')
+    // Cek apakah sudah ada koma desimal di angka terakhir
+    const parts = display.split(/[\+\-\×\÷]/)
+    const lastPart = parts[parts.length - 1]
+    if (!lastPart.includes(',')) {
+      updateDisplay(display + ',')
       addToBuffer('.')
     }
   }, [display, waitingForOperand, updateDisplay, addToBuffer])
 
+  // Handle parentheses
+  const inputParentheses = useCallback(() => {
+    if (waitingForOperand) {
+      setWaitingForOperand(false)
+      setExpression('')
+      updateDisplay('(')
+      setParenStack(1)
+      addToBuffer('(')
+      return
+    }
+
+    const lastChar = display.slice(-1)
+    const isOpen = parenStack > 0 && (lastChar === '(' || /[\+\-\×\÷]/.test(lastChar))
+    
+    if (isOpen || parenStack === 0) {
+      // Buka kurung
+      updateDisplay(display === '0' ? '(' : display + ' × (')
+      setParenStack(prev => prev + 1)
+      addToBuffer('(')
+    } else {
+      // Tutup kurung
+      updateDisplay(display + ')')
+      setParenStack(prev => prev - 1)
+      addToBuffer(')')
+    }
+  }, [display, parenStack, waitingForOperand, updateDisplay, addToBuffer])
+
+  // Handle square root
+  const inputSquareRoot = useCallback(() => {
+    const value = parseLocaleNumber(display)
+    if (value < 0) {
+      updateDisplay('Error')
+      setWaitingForOperand(true)
+      return
+    }
+    const result = Math.sqrt(value)
+    const formatted = formatNumber(result)
+    setExpression(`√(${display})`)
+    updateDisplay(formatted)
+    setWaitingForOperand(true)
+    setPreviousValue(null)
+    setOperator(null)
+    addToBuffer('√')
+  }, [display, updateDisplay, addToBuffer])
+
   // Handle operator
   const inputOperator = useCallback((nextOperator) => {
-    const inputValue = parseFloat(display.replace(/\./g, '').replace(',', '.'))
+    const inputValue = parseLocaleNumber(display)
 
     if (previousValue === null) {
       setPreviousValue(inputValue)
-    } else if (operator) {
+    } else if (operator && !waitingForOperand) {
       const currentValue = previousValue || 0
       const newValue = calculate(currentValue, inputValue, operator)
       
@@ -68,9 +127,8 @@ function Calculator() {
     setOperator(nextOperator)
     setExpression(`${display} ${nextOperator}`)
     
-    // Add to secret code buffer
     addToBuffer(nextOperator)
-  }, [display, previousValue, operator, updateDisplay, addToBuffer])
+  }, [display, previousValue, operator, waitingForOperand, updateDisplay, addToBuffer])
 
   // Calculate result
   const calculate = (left, right, op) => {
@@ -86,13 +144,12 @@ function Calculator() {
 
   // Handle equals
   const inputEquals = useCallback(() => {
-    const inputValue = parseFloat(display.replace(/\./g, '').replace(',', '.'))
+    const inputValue = parseLocaleNumber(display)
 
     if (operator && previousValue !== null) {
       const result = calculate(previousValue, inputValue, operator)
       const formattedResult = formatNumber(result)
       
-      // Save to history
       const fullExpression = `${previousValue} ${operator} ${inputValue}`
       historyManager.add(fullExpression, result)
       setHistory(historyManager.get())
@@ -102,9 +159,9 @@ function Calculator() {
       setPreviousValue(null)
       setOperator(null)
       setWaitingForOperand(true)
+      setParenStack(0)
     }
     
-    // Add to secret code buffer (equals is part of secret code)
     addToBuffer('=')
   }, [display, operator, previousValue, updateDisplay, addToBuffer])
 
@@ -115,6 +172,7 @@ function Calculator() {
     setPreviousValue(null)
     setOperator(null)
     setWaitingForOperand(false)
+    setParenStack(0)
   }, [])
 
   // Clear entry
@@ -124,19 +182,23 @@ function Calculator() {
 
   // Toggle sign
   const toggleSign = useCallback(() => {
-    const value = parseFloat(display.replace(/\./g, '').replace(',', '.'))
-    updateDisplay(formatNumber(-value))
+    if (display === '0') return
+    if (display.startsWith('-')) {
+      updateDisplay(display.slice(1))
+    } else {
+      updateDisplay('-' + display)
+    }
   }, [display, updateDisplay])
 
   // Percentage
   const inputPercent = useCallback(() => {
-    const value = parseFloat(display.replace(/\./g, '').replace(',', '.'))
+    const value = parseLocaleNumber(display)
     updateDisplay(formatNumber(value / 100))
   }, [display, updateDisplay])
 
   // Memory functions
   const handleMemory = useCallback((action) => {
-    const currentValue = parseFloat(display.replace(/\./g, '').replace(',', '.'))
+    const currentValue = parseLocaleNumber(display)
     
     switch (action) {
       case 'MC':
@@ -144,6 +206,7 @@ function Calculator() {
         break
       case 'MR':
         updateDisplay(formatNumber(memoryOperations.get()))
+        setWaitingForOperand(true)
         break
       case 'M+':
         memoryOperations.add(currentValue)
@@ -164,6 +227,13 @@ function Calculator() {
   // Toggle history panel
   const toggleHistory = useCallback(() => {
     setShowHistory(prev => !prev)
+    setShowMenu(false)
+  }, [])
+
+  // Toggle menu panel
+  const toggleMenu = useCallback(() => {
+    setShowMenu(prev => !prev)
+    setShowHistory(false)
   }, [])
 
   // Navigate to scientific mode
@@ -192,13 +262,22 @@ function Calculator() {
       } else if (key === 'Escape') {
         clearAll()
       } else if (key === 'Backspace') {
-        setDisplay(prev => prev.length > 1 ? prev.slice(0, -1) : '0')
+        setDisplay(prev => {
+          if (prev.length > 1 && prev !== 'Error') {
+            return prev.slice(0, -1)
+          }
+          return '0'
+        })
+      } else if (key === '(' || key === ')') {
+        inputParentheses()
+      } else if (key === '^') {
+        inputOperator('^')
       }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [inputNumber, inputDecimal, inputOperator, inputEquals, clearAll])
+  }, [inputNumber, inputDecimal, inputOperator, inputEquals, clearAll, inputParentheses])
 
   // Button component
   const CalcButton = ({ label, onClick, variant = 'number', className = '' }) => {
@@ -226,7 +305,7 @@ function Calculator() {
     <div className="calculator-page">
       {/* Header */}
       <div className="calc-header">
-        <button className="header-btn" onClick={toggleHistory}>
+        <button className="header-btn" onClick={toggleMenu}>
           <span>☰</span>
         </button>
         <div className="mode-toggle">
@@ -259,9 +338,9 @@ function Calculator() {
       {/* Button Grid */}
       <div className="calc-button-grid">
         {/* Row 1: Functions */}
-        <CalcButton label="( )" onClick={() => {}} variant="function" />
+        <CalcButton label="( )" onClick={inputParentheses} variant="function" />
         <CalcButton label="%" onClick={inputPercent} variant="function" />
-        <CalcButton label="√" onClick={() => {}} variant="function" />
+        <CalcButton label="√" onClick={inputSquareRoot} variant="function" />
         <CalcButton label="^" onClick={() => inputOperator('^')} variant="function" />
         <CalcButton label="÷" onClick={() => inputOperator('÷')} variant="operator" />
 
@@ -289,6 +368,30 @@ function Calculator() {
         <CalcButton label="." onClick={inputDecimal} variant="function" />
         <CalcButton label="=" onClick={inputEquals} variant="equals" className="tall" />
       </div>
+
+      {/* Menu Panel (Slide-up) */}
+      {showMenu && (
+        <div className="menu-panel animate-slide-up">
+          <div className="menu-header">
+            <h3>Menu</h3>
+            <button onClick={() => setShowMenu(false)}>✕</button>
+          </div>
+          <div className="menu-list">
+            <button onClick={() => { navigate('/skyroom'); setShowMenu(false) }}>
+              <span>🌌</span> Sky Room
+            </button>
+            <button onClick={() => { navigate('/gudang'); setShowMenu(false) }}>
+              <span>📦</span> Gudang
+            </button>
+            <button onClick={() => { navigate('/ruang-kerja'); setShowMenu(false) }}>
+              <span>📝</span> Ruang Kerja
+            </button>
+            <button onClick={() => { navigate('/scientific'); setShowMenu(false) }}>
+              <span>🔬</span> Scientific
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* History Panel (Slide-up) */}
       {showHistory && (
@@ -322,6 +425,7 @@ function Calculator() {
           display: flex;
           flex-direction: column;
           overflow: hidden;
+          position: relative;
         }
 
         /* Header */
@@ -484,6 +588,67 @@ function Calculator() {
           grid-row: span 2;
           aspect-ratio: auto;
           border-radius: 50px;
+        }
+
+        /* Menu Panel */
+        .menu-panel {
+          position: absolute;
+          bottom: 0;
+          left: 0;
+          right: 0;
+          background: #1C1C1E;
+          border-radius: 24px 24px 0 0;
+          max-height: 60%;
+          z-index: 100;
+          animation: slideUp 300ms ease;
+        }
+
+        .menu-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 16px 24px;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .menu-header h3 {
+          color: #FFFFFF;
+          font-size: 18px;
+          margin: 0;
+        }
+
+        .menu-header button {
+          background: none;
+          border: none;
+          color: #8E8E93;
+          font-size: 18px;
+          cursor: pointer;
+        }
+
+        .menu-list {
+          padding: 8px 16px;
+        }
+
+        .menu-list button {
+          width: 100%;
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          padding: 14px 16px;
+          background: none;
+          border: none;
+          color: #FFFFFF;
+          font-size: 16px;
+          cursor: pointer;
+          border-radius: 12px;
+        }
+
+        .menu-list button:hover {
+          background: rgba(255, 255, 255, 0.05);
+        }
+
+        .menu-list button span {
+          font-size: 20px;
         }
 
         /* History Panel */
