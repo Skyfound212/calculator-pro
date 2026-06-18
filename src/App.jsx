@@ -1,0 +1,51 @@
+import React, { useState, useEffect } from 'react'
+import { Routes, Route, useLocation } from 'react-router-dom'
+import SplashScreen from './pages/SplashScreen'
+import Calculator from './pages/Calculator'
+import CalculatorScientific from './pages/CalculatorScientific'
+import SkyRoom from './pages/SkyRoom'
+import Gudang from './pages/Gudang'
+import RuangKerja from './pages/RuangKerja'
+
+function App() {
+  const [showSplash, setShowSplash] = useState(true)
+  const location = useLocation()
+
+  // Splash screen logic: show on first load only
+  useEffect(() => {
+    const hasSeenSplash = sessionStorage.getItem('calculatorpro_splash_seen')
+    if (hasSeenSplash) {
+      setShowSplash(false)
+    } else {
+      const timer = setTimeout(() => {
+        setShowSplash(false)
+        sessionStorage.setItem('calculatorpro_splash_seen', 'true')
+      }, 3000)
+      return () => clearTimeout(timer)
+    }
+  }, [])
+
+  // Scroll to top on route change
+  useEffect(() => {
+    window.scrollTo(0, 0)
+  }, [location.pathname])
+
+  // Show splash on initial load
+  if (showSplash && location.pathname === '/') {
+    return <SplashScreen />
+  }
+
+  return (
+    <div className="app-container">
+      <Routes>
+        <Route path="/" element={<Calculator />} />
+        <Route path="/scientific" element={<CalculatorScientific />} />
+        <Route path="/skyroom" element={<SkyRoom />} />
+        <Route path="/gudang" element={<Gudang />} />
+        <Route path="/ruang-kerja" element={<RuangKerja />} />
+      </Routes>
+    </div>
+  )
+}
+
+export default App
