@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useSecretCode } from '../hooks/useSecretCode'
 import { 
@@ -9,6 +9,13 @@ import {
   historyManager 
 } from '../utils/calculator'
 
+// Parse number dari display string (handle locale id-ID)
+const parseLocaleNumber = (str) => {
+  if (str === 'Error' || str === '∞' || str === '-∞') return NaN
+  const cleaned = str.replace(/\./g, '').replace(',', '.')
+  return parseFloat(cleaned)
+}
+
 function CalculatorScientific() {
   const [display, setDisplay] = useState('0')
   const [expression, setExpression] = useState('')
@@ -18,10 +25,13 @@ function CalculatorScientific() {
   const [memory, setMemory] = useState(memoryOperations.get())
   const [isRadians, setIsRadians] = useState(true)
   const [showHistory, setShowHistory] = useState(false)
+  const [showMenu, setShowMenu] = useState(false)
   const [history, setHistory] = useState(historyManager.get())
+  const [parenStack, setParenStack] = useState(0)
   
   const { addToBuffer } = useSecretCode()
   const navigate = useNavigate()
+  const displayRef = useRef(null)
 
   const updateDisplay = useCallback((value) => {
     setDisplay(value)
@@ -32,6 +42,7 @@ function CalculatorScientific() {
     if (waitingForOperand) {
       updateDisplay(num.toString())
       setWaitingForOperand(false)
+      setExpression('') // Clear expression after equals
     } else {
       updateDisplay(display === '0' ? num.toString() : display + num)
     }
@@ -41,91 +52,138 @@ function CalculatorScientific() {
   // Input decimal
   const inputDecimal = useCallback(() => {
     if (waitingForOperand) {
-      updateDisplay('0.')
+      updateDisplay('0,')
       setWaitingForOperand(false)
+      setExpression('')
       addToBuffer('.')
       return
     }
-    if (!display.includes('.')) {
-      updateDisplay(display + '.')
+    
+    // Cek apakah sudah ada koma desimal di angka terakhir
+    const parts = display.split(/[\+\-\×\÷\(\)]/)
+    const lastPart = parts[parts.length - 1]
+    if (!lastPart.includes(',')) {
+      updateDisplay(display + ',')
       addToBuffer('.')
     }
   }, [display, waitingForOperand, updateDisplay, addToBuffer])
 
+  // Handle parentheses
+  const inputParentheses = useCallback(() => {
+    if (waitingForOperand) {
+      setWaitingForOperand(false)
+      setExpression('')
+      updateDisplay('(')
+      setParenStack(1)
+      addToBuffer('(')
+      return
+    }
+
+    const lastChar = display.slice(-1)
+    const isOpen = parenStack > 0 && (lastChar === '(' || /[\+\-\×\÷]/.test(lastChar))
+    
+    if (isOpen || parenStack === 0) {
+      // Buka kurung
+      updateDisplay(display === '0' ? '(' : display + ' × (')
+      setParenStack(prev => prev + 1)
+      addToBuffer('(')
+    } else {
+      // Tutup kurung
+      updateDisplay(display + ')')
+      setParenStack(prev => prev - 1)
+      addToBuffer(')')
+    }
+  }, [display, parenStack, waitingForOperand, updateDisplay, addToBuffer])
+
   // Scientific functions
   const applyScientific = useCallback((func) => {
-    const value = parseFloat(display.replace(/\./g, '').replace(',', '.'))
+    const value = parseLocaleNumber(display)
+    if (isNaN(value)) return
+    
     let result = null
     let expr = ''
 
     switch (func) {
       case 'sin':
         result = isRadians ? scientificFunctions.sin(value) : scientificFunctions.sin(scientificFunctions.rad(value))
-        expr = `sin(${value})`
+        expr = `sin(${display})`
         break
       case 'cos':
         result = isRadians ? scientificFunctions.cos(value) : scientificFunctions.cos(scientificFunctions.rad(value))
-        expr = `cos(${value})`
+        expr = `cos(${display})`
         break
       case 'tan':
         result = isRadians ? scientificFunctions.tan(value) : scientificFunctions.tan(scientificFunctions.rad(value))
-        expr = `tan(${value})`
+        expr = `tan(${display})`
         break
       case 'asin':
         result = scientificFunctions.asin(value)
-        expr = `asin(${value})`
+        expr = `asin(${display})`
         break
       case 'acos':
         result = scientificFunctions.acos(value)
-        expr = `acos(${value})`
+        expr = `acos(${display})`
         break
       case 'atan':
         result = scientificFunctions.atan(value)
-        expr = `atan(${value})`
+        expr = `atan(${display})`
         break
       case 'log':
         result = scientificFunctions.log(value)
-        expr = `log(${value})`
+        expr = `log(${display})`
         break
       case 'ln':
         result = scientificFunctions.ln(value)
-        expr = `ln(${value})`
+        expr = `ln(${display})`
         break
       case 'sqrt':
+        if (value < 0) { updateDisplay('Error'); setWaitingForOperand(true); return }
         result = scientificFunctions.sqrt(value)
-        expr = `√(${value})`
+        expr = `√(${display})`
         break
       case 'cbrt':
         result = scientificFunctions.cbrt(value)
-        expr = `∛(${value})`
+        expr = `∛(${display})`
         break
       case 'square':
         result = scientificFunctions.square(value)
-        expr = `sqr(${value})`
+        expr = `sqr(${display})`
         break
       case 'cube':
         result = scientificFunctions.cube(value)
-        expr = `cube(${value})`
+        expr = `cube(${display})`
         break
       case 'inv':
+        if (value === 0) { updateDisplay('Error'); setWaitingForOperand(true); return }
         result = scientificFunctions.inv(value)
-        expr = `1/(${value})`
+        expr = `1/(${display})`
         break
       case 'abs':
         result = scientificFunctions.abs(value)
-        expr = `abs(${value})`
+        expr = `abs(${display})`
         break
       case 'factorial':
+        if (value < 0 || value > 170) { updateDisplay('Error'); setWaitingForOperand(true); return }
         result = scientificFunctions.factorial(Math.floor(value))
-        expr = `fact(${value})`
+        expr = `fact(${display})`
+        break
+      case '10x':
+        result = scientificFunctions.pow10(value)
+        expr = `10^(${display})`
+        break
+      case 'ex':
+        result = scientificFunctions.exp(value)
+        expr = `e^(${display})`
         break
       case 'pi':
         updateDisplay(formatNumber(Math.PI))
         setWaitingForOperand(true)
+        setExpression('π')
         return
       case 'e':
         updateDisplay(formatNumber(Math.E))
         setWaitingForOperand(true)
+        setExpression('e')
         return
       default:
         return
@@ -135,19 +193,22 @@ function CalculatorScientific() {
       updateDisplay(formatNumber(result))
       setExpression(expr)
       setWaitingForOperand(true)
+      setPreviousValue(null)
+      setOperator(null)
+      setParenStack(0)
       
       historyManager.add(expr, result)
       setHistory(historyManager.get())
     }
-  }, [display, isRadians, updateDisplay, addToBuffer])
+  }, [display, isRadians, updateDisplay])
 
   // Standard operators
   const inputOperator = useCallback((nextOperator) => {
-    const inputValue = parseFloat(display.replace(/\./g, '').replace(',', '.'))
+    const inputValue = parseLocaleNumber(display)
 
     if (previousValue === null) {
       setPreviousValue(inputValue)
-    } else if (operator) {
+    } else if (operator && !waitingForOperand) {
       const currentValue = previousValue || 0
       const newValue = calculate(currentValue, inputValue, operator)
       setPreviousValue(newValue)
@@ -158,7 +219,7 @@ function CalculatorScientific() {
     setOperator(nextOperator)
     setExpression(`${display} ${nextOperator}`)
     addToBuffer(nextOperator)
-  }, [display, previousValue, operator, updateDisplay, addToBuffer])
+  }, [display, previousValue, operator, waitingForOperand, updateDisplay, addToBuffer])
 
   const calculate = (left, right, op) => {
     switch (op) {
@@ -172,7 +233,7 @@ function CalculatorScientific() {
   }
 
   const inputEquals = useCallback(() => {
-    const inputValue = parseFloat(display.replace(/\./g, '').replace(',', '.'))
+    const inputValue = parseLocaleNumber(display)
 
     if (operator && previousValue !== null) {
       const result = calculate(previousValue, inputValue, operator)
@@ -185,6 +246,7 @@ function CalculatorScientific() {
       setPreviousValue(null)
       setOperator(null)
       setWaitingForOperand(true)
+      setParenStack(0)
     }
     addToBuffer('=')
   }, [display, operator, previousValue, updateDisplay, addToBuffer])
@@ -195,24 +257,35 @@ function CalculatorScientific() {
     setPreviousValue(null)
     setOperator(null)
     setWaitingForOperand(false)
+    setParenStack(0)
   }, [])
 
   const toggleSign = useCallback(() => {
-    const value = parseFloat(display.replace(/\./g, '').replace(',', '.'))
-    updateDisplay(formatNumber(-value))
+    if (display === '0' || display === 'Error') return
+    if (display.startsWith('-')) {
+      updateDisplay(display.slice(1))
+    } else {
+      updateDisplay('-' + display)
+    }
   }, [display, updateDisplay])
 
   const inputPercent = useCallback(() => {
-    const value = parseFloat(display.replace(/\./g, '').replace(',', '.'))
+    const value = parseLocaleNumber(display)
+    if (isNaN(value)) return
     updateDisplay(formatNumber(value / 100))
   }, [display, updateDisplay])
 
   // Memory
   const handleMemory = useCallback((action) => {
-    const currentValue = parseFloat(display.replace(/\./g, '').replace(',', '.'))
+    const currentValue = parseLocaleNumber(display)
+    if (isNaN(currentValue)) return
+    
     switch (action) {
       case 'MC': memoryOperations.clear(); break
-      case 'MR': updateDisplay(formatNumber(memoryOperations.get())); break
+      case 'MR': 
+        updateDisplay(formatNumber(memoryOperations.get()))
+        setWaitingForOperand(true)
+        break
       case 'M+': memoryOperations.add(currentValue); break
       case 'M-': memoryOperations.subtract(currentValue); break
       case 'MS': memoryOperations.set(currentValue); break
@@ -221,7 +294,16 @@ function CalculatorScientific() {
     setMemory(memoryOperations.get())
   }, [display, updateDisplay])
 
-  const toggleHistory = useCallback(() => setShowHistory(prev => !prev), [])
+  const toggleHistory = useCallback(() => {
+    setShowHistory(prev => !prev)
+    setShowMenu(false)
+  }, [])
+  
+  const toggleMenu = useCallback(() => {
+    setShowMenu(prev => !prev)
+    setShowHistory(false)
+  }, [])
+  
   const goToBasic = useCallback(() => navigate('/'), [navigate])
   const toggleRadians = useCallback(() => setIsRadians(prev => !prev), [])
 
@@ -236,10 +318,17 @@ function CalculatorScientific() {
       else if (key === '/') { e.preventDefault(); inputOperator('÷') }
       else if (key === 'Enter' || key === '=') inputEquals()
       else if (key === 'Escape') clearAll()
+      else if (key === 'Backspace') {
+        setDisplay(prev => {
+          if (prev.length > 1 && prev !== 'Error') return prev.slice(0, -1)
+          return '0'
+        })
+      } else if (key === '(' || key === ')') inputParentheses()
+      else if (key === '^') inputOperator('^')
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [inputNumber, inputDecimal, inputOperator, inputEquals, clearAll])
+  }, [inputNumber, inputDecimal, inputOperator, inputEquals, clearAll, inputParentheses])
 
   const CalcButton = ({ label, onClick, variant = 'number', className = '', small = false }) => {
     const variants = {
@@ -266,7 +355,7 @@ function CalculatorScientific() {
     <div className="scientific-page">
       {/* Header */}
       <div className="sci-header">
-        <button className="sci-header-btn" onClick={toggleHistory}>☰</button>
+        <button className="sci-header-btn" onClick={toggleMenu}>☰</button>
         <div className="sci-mode-toggle">
           <span className="sci-mode-inactive" onClick={goToBasic}>Basic</span>
           <span className="sci-mode-active">Scientific</span>
@@ -280,7 +369,7 @@ function CalculatorScientific() {
       {/* Display */}
       <div className="sci-display">
         <div className="sci-expression">{expression}</div>
-        <div className="sci-main">{display}</div>
+        <div className="sci-main" ref={displayRef}>{display}</div>
       </div>
 
       {/* Scientific Functions Row 1 */}
@@ -306,8 +395,8 @@ function CalculatorScientific() {
       {/* Scientific Functions Row 3 */}
       <div className="sci-sci-row">
         <CalcButton label="xʸ" onClick={() => inputOperator('^')} variant="sci" small />
-        <CalcButton label="10ˣ" onClick={() => {}} variant="sci" small />
-        <CalcButton label="eˣ" onClick={() => {}} variant="sci" small />
+        <CalcButton label="10ˣ" onClick={() => applyScientific('10x')} variant="sci" small />
+        <CalcButton label="eˣ" onClick={() => applyScientific('ex')} variant="sci" small />
         <CalcButton label="n!" onClick={() => applyScientific('factorial')} variant="sci" small />
         <CalcButton label="√" onClick={() => applyScientific('sqrt')} variant="sci" small />
         <CalcButton label="∛" onClick={() => applyScientific('cbrt')} variant="sci" small />
@@ -325,8 +414,8 @@ function CalculatorScientific() {
 
       {/* Main Button Grid */}
       <div className="sci-button-grid">
-        <CalcButton label="(" onClick={() => {}} variant="function" />
-        <CalcButton label=")" onClick={() => {}} variant="function" />
+        <CalcButton label="(" onClick={() => inputParentheses('(')} variant="function" />
+        <CalcButton label=")" onClick={() => inputParentheses(')')} variant="function" />
         <CalcButton label="%" onClick={inputPercent} variant="function" />
         <CalcButton label="÷" onClick={() => inputOperator('÷')} variant="operator" />
 
@@ -350,6 +439,30 @@ function CalculatorScientific() {
         <CalcButton label="." onClick={inputDecimal} variant="function" />
         <CalcButton label="=" onClick={inputEquals} variant="equals" />
       </div>
+
+      {/* Menu Panel */}
+      {showMenu && (
+        <div className="sci-menu-panel animate-slide-up">
+          <div className="sci-menu-header">
+            <h3>Menu</h3>
+            <button onClick={() => setShowMenu(false)}>✕</button>
+          </div>
+          <div className="sci-menu-list">
+            <button onClick={() => { navigate('/skyroom'); setShowMenu(false) }}>
+              <span>🌌</span> Sky Room
+            </button>
+            <button onClick={() => { navigate('/gudang'); setShowMenu(false) }}>
+              <span>📦</span> Gudang
+            </button>
+            <button onClick={() => { navigate('/ruang-kerja'); setShowMenu(false) }}>
+              <span>📝</span> Ruang Kerja
+            </button>
+            <button onClick={() => { navigate('/'); setShowMenu(false) }}>
+              <span>🧮</span> Basic
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* History Panel */}
       {showHistory && (
@@ -381,6 +494,7 @@ function CalculatorScientific() {
           display: flex;
           flex-direction: column;
           overflow: hidden;
+          position: relative;
         }
 
         .sci-header {
@@ -561,6 +675,67 @@ function CalculatorScientific() {
 
         .sci-btn-sci:active {
           background: rgba(255, 107, 0, 0.3);
+        }
+
+        /* Menu Panel */
+        .sci-menu-panel {
+          position: absolute;
+          bottom: 0;
+          left: 0;
+          right: 0;
+          background: #1C1C1E;
+          border-radius: 24px 24px 0 0;
+          max-height: 60%;
+          z-index: 100;
+          animation: slideUp 300ms ease;
+        }
+
+        .sci-menu-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 14px 20px;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .sci-menu-header h3 {
+          color: #FFFFFF;
+          font-size: 16px;
+          margin: 0;
+        }
+
+        .sci-menu-header button {
+          background: none;
+          border: none;
+          color: #8E8E93;
+          font-size: 18px;
+          cursor: pointer;
+        }
+
+        .sci-menu-list {
+          padding: 8px 16px;
+        }
+
+        .sci-menu-list button {
+          width: 100%;
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          padding: 14px 16px;
+          background: none;
+          border: none;
+          color: #FFFFFF;
+          font-size: 16px;
+          cursor: pointer;
+          border-radius: 12px;
+        }
+
+        .sci-menu-list button:hover {
+          background: rgba(255, 255, 255, 0.05);
+        }
+
+        .sci-menu-list button span {
+          font-size: 20px;
         }
 
         .sci-history-panel {
