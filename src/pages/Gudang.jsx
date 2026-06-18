@@ -1,676 +1,525 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FILE_ICONS, STORAGE_KEYS } from '../utils/constants'
+import { ArrowLeft, Folder, Star, Trash2, Upload, FileText, Image, Code, File } from 'lucide-react'
+import { STORAGE_KEYS } from '../utils/constants'
+
+// IDB Helper - wrap native IndexedDB dalam Promise
+const openDB = () => {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open('CalculatorProDB', 1)
+    request.onerror = () => reject(request.error)
+    request.onsuccess = () => resolve(request.result)
+    request.onupgradeneeded = (event) => {
+      const db = event.target.result
+      if (!db.objectStoreNames.contains('files')) {
+        db.createObjectStore('files', { keyPath: 'id' })
+      }
+      if (!db.objectStoreNames.contains('folders')) {
+        db.createObjectStore('folders', { keyPath: 'id' })
+      }
+    }
+  })
+}
+
+// Wrap IDB transaction dalam Promise
+const transactionComplete = (tx) => {
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error)
+    tx.onabort = () => reject(new Error('Transaction aborted'))
+  })
+}
+
+// Wrap IDB request dalam Promise
+const idbRequest = (request) => {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result)
+    request.onerror = () => reject(request.error)
+  })
+}
 
 function Gudang() {
   const navigate = useNavigate()
-  const fileInputRef = useRef(null)
   
-  // State
   const [files, setFiles] = useState([])
   const [folders, setFolders] = useState([
-    { id: 'root', name: 'Semua File', parentId: null, createdAt: Date.now() }
+    { id: 'root', name: 'Semua File', parentId: null }
   ])
-  const [currentFolderId, setCurrentFolderId] = useState('root')
-  const [selectedItems, setSelectedItems] = useState([])
-  const [viewMode, setViewMode] = useState('grid') // 'grid' | 'list'
-  const [sortBy, setSortBy] = useState('name') // 'name' | 'date' | 'size' | 'type'
-  const [sortOrder, setSortOrder] = useState('asc') // 'asc' | 'desc'
-  const [searchQuery, setSearchQuery] = useState('')
-  const [showSearch, setShowSearch] = useState(false)
-  const [showNewFolder, setShowNewFolder] = useState(false)
-  const [newFolderName, setNewFolderName] = useState('')
-  const [contextMenu, setContextMenu] = useState(null)
-  const [previewItem, setPreviewItem] = useState(null)
   const [trash, setTrash] = useState([])
-  const [activeTab, setActiveTab] = useState('all') // 'all' | 'starred' | 'shared' | 'trash'
-  const [showActionMenu, setShowActionMenu] = useState(false)
-  const [storageUsed, setStorageUsed] = useState(0)
-  const [storageLimit] = useState(2 * 1024 * 1024 * 1024) // 2GB default
+  const [currentFolder, setCurrentFolder] = useState('root')
+  const [viewMode, setViewMode] = useState('grid') // grid | list
+  const [selectedFiles, setSelectedFiles] = useState([])
+  const [showUpload, setShowUpload] = useState(false)
+  const [showTrash, setShowTrash] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [uploading, setUploading] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState(0)
+  const [uploadError, setUploadError] = useState(null)
 
   // Load data from IndexedDB on mount
   useEffect(() => {
+    const loadData = async () => {
+      try {
+        const db = await openDB()
+        const tx = db.transaction(['files', 'folders'], 'readonly')
+        
+        const filesStore = tx.objectStore('files')
+        const foldersStore = tx.objectStore('folders')
+        
+        const allFiles = await idbRequest(filesStore.getAll())
+        const allFolders = await idbRequest(foldersStore.getAll())
+        
+        await transactionComplete(tx)
+        db.close()
+        
+        setFiles(allFiles || [])
+        if (allFolders && allFolders.length > 0) {
+          setFolders(allFolders)
+        }
+      } catch (err) {
+        console.error('Failed to load from IndexedDB:', err)
+        // Fallback to localStorage
+        try {
+          const stored = localStorage.getItem(STORAGE_KEYS.GUDANG_DATA)
+          if (stored) {
+            const data = JSON.parse(stored)
+            setFiles(data.files || [])
+            setFolders(data.folders || [{ id: 'root', name: 'Semua File', parentId: null }])
+            setTrash(data.trash || [])
+          }
+        } catch (e) {
+          console.error('Fallback load failed:', e)
+        }
+      }
+    }
+    
     loadData()
   }, [])
 
-  const loadData = async () => {
-    try {
-      // Try to load from IndexedDB
-      const db = await openDB()
-      const storedFiles = await db.getAll('files')
-      const storedFolders = await db.getAll('folders')
-      const storedTrash = await db.getAll('trash')
-      
-      if (storedFiles.length > 0) setFiles(storedFiles)
-      if (storedFolders.length > 0) setFolders(storedFolders)
-      if (storedTrash.length > 0) setTrash(storedTrash)
-      
-      calculateStorage(storedFiles)
-    } catch {
-      // Fallback: load from localStorage
-      try {
-        const stored = localStorage.getItem(STORAGE_KEYS.GUDANG_DATA)
-        if (stored) {
-          const data = JSON.parse(stored)
-          if (data.files) setFiles(data.files)
-          if (data.folders) setFolders(data.folders)
-          if (data.trash) setTrash(data.trash)
-          calculateStorage(data.files || [])
-        }
-      } catch {
-        // Use defaults
-      }
-    }
-  }
-
-  const saveData = async () => {
+  // Save data to IndexedDB - menerima data sebagai parameter (Bug 3 fix)
+  const saveData = useCallback(async (dataToSave) => {
+    const data = dataToSave || { files, folders, trash }
+    
     try {
       const db = await openDB()
-      const tx = db.transaction(['files', 'folders', 'trash'], 'readwrite')
-      await Promise.all([
-        ...files.map(f => tx.objectStore('files').put(f)),
-        ...folders.map(f => tx.objectStore('folders').put(f)),
-        ...trash.map(f => tx.objectStore('trash').put(f))
-      ])
-      await tx.done
-    } catch {
+      const tx = db.transaction(['files', 'folders'], 'readwrite')
+      
+      const filesStore = tx.objectStore('files')
+      const foldersStore = tx.objectStore('folders')
+      
+      // Clear dan rewrite semua data (Bug 2 fix - wrap dalam Promise)
+      await idbRequest(filesStore.clear())
+      await idbRequest(foldersStore.clear())
+      
+      // Wrap tiap .put() dalam Promise
+      const putPromises = [
+        ...data.files.map(f => idbRequest(filesStore.put(f))),
+        ...data.folders.map(f => idbRequest(foldersStore.put(f)))
+      ]
+      
+      await Promise.all(putPromises)
+      await transactionComplete(tx) // Bug 1 fix - tx.done ganti jadi Promise wrapper
+      db.close()
+    } catch (err) {
+      console.error('Failed to save to IndexedDB:', err)
       // Fallback to localStorage
       try {
-        localStorage.setItem(STORAGE_KEYS.GUDANG_DATA, JSON.stringify({ files, folders, trash }))
-      } catch {
-        // Storage full or not available
+        localStorage.setItem(STORAGE_KEYS.GUDANG_DATA, JSON.stringify(data))
+      } catch (e) {
+        console.error('Fallback save failed:', e)
+        setUploadError('Storage penuh! Hapus file lama.')
       }
     }
-  }
+  }, [files, folders, trash])
 
-  // IndexedDB helper
-  const openDB = () => {
-    return new Promise((resolve, reject) => {
-      const request = indexedDB.open('CalculatorProDB', 1)
-      request.onerror = () => reject(request.error)
-      request.onsuccess = () => resolve(request.result)
-      request.onupgradeneeded = (event) => {
-        const db = event.target.result
-        if (!db.objectStoreNames.contains('files')) {
-          db.createObjectStore('files', { keyPath: 'id' })
-        }
-        if (!db.objectStoreNames.contains('folders')) {
-          db.createObjectStore('folders', { keyPath: 'id' })
-        }
-        if (!db.objectStoreNames.contains('trash')) {
-          db.createObjectStore('trash', { keyPath: 'id' })
-        }
-      }
-    })
-  }
-
-  const calculateStorage = (fileList) => {
-    const used = fileList.reduce((sum, f) => sum + (f.size || 0), 0)
-    setStorageUsed(used)
-  }
-
-  // Navigation
-  const goBack = () => navigate('/skyroom')
-  
-  const getBreadcrumb = () => {
-    const crumbs = []
-    let current = folders.find(f => f.id === currentFolderId)
-    while (current) {
-      crumbs.unshift(current)
-      current = folders.find(f => f.id === current.parentId)
-    }
-    return crumbs
-  }
-
-  // File operations
+  // Upload file handler dengan progress (Bug 4 fix)
   const handleFileUpload = useCallback(async (event) => {
     const uploadedFiles = event.target.files
-    if (!uploadedFiles.length) return
-
-    const newFiles = []
-    for (const file of uploadedFiles) {
-      const reader = new FileReader()
-      const content = await new Promise((resolve) => {
-        reader.onload = (e) => resolve(e.target.result)
-        reader.readAsDataURL(file)
-      })
-
-      const newFile = {
-        id: `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        name: file.name,
-        originalName: file.name,
-        type: file.type,
-        size: file.size,
-        content: content,
-        folderId: currentFolderId,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        isStarred: false,
-        isTrashed: false
-      }
-      newFiles.push(newFile)
-    }
-
-    const updatedFiles = [...files, ...newFiles]
-    setFiles(updatedFiles)
-    calculateStorage(updatedFiles)
-    saveData()
-  }, [files, currentFolderId])
-
-  const createFolder = useCallback(() => {
-    if (!newFolderName.trim()) return
+    if (!uploadedFiles || uploadedFiles.length === 0) return
     
+    setUploading(true)
+    setUploadProgress(0)
+    setUploadError(null)
+    
+    const newFiles = []
+    const totalFiles = uploadedFiles.length
+    
+    for (let i = 0; i < uploadedFiles.length; i++) {
+      const file = uploadedFiles[i]
+      
+      // Cek ukuran file (max 5MB)
+      if (file.size > 5 * 1024 * 1024) {
+        setUploadError(`File "${file.name}" terlalu besar (maksimal 5MB)`)
+        continue
+      }
+      
+      // Cek total storage
+      const totalSize = files.reduce((sum, f) => sum + (f.size || 0), 0) + file.size
+      if (totalSize > 10 * 1024 * 1024) { // 10MB total limit
+        setUploadError('Total storage melebihi 10MB. Hapus file lama terlebih dahulu.')
+        break
+      }
+      
+      try {
+        const content = await new Promise((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = (e) => resolve(e.target.result)
+          reader.onerror = (e) => reject(reader.error)
+          reader.readAsDataURL(file)
+        })
+        
+        const newFile = {
+          id: `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          name: file.name,
+          originalName: file.name,
+          type: file.type || 'application/octet-stream',
+          size: file.size,
+          content: content,
+          folderId: currentFolder,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          isStarred: false,
+          isTrashed: false
+        }
+        
+        newFiles.push(newFile)
+        setUploadProgress(Math.round(((i + 1) / totalFiles) * 100))
+      } catch (err) {
+        console.error('Failed to read file:', err)
+        setUploadError(`Gagal membaca file "${file.name}"`)
+      }
+    }
+    
+    if (newFiles.length > 0) {
+      const updatedFiles = [...files, ...newFiles]
+      setFiles(updatedFiles)
+      // Bug 3 fix - kirim data langsung ke saveData, tidak baca state lama
+      await saveData({ files: updatedFiles, folders, trash })
+    }
+    
+    setUploading(false)
+    setUploadProgress(0)
+    setShowUpload(false)
+    
+    // Reset input
+    event.target.value = ''
+  }, [files, folders, trash, currentFolder, saveData])
+
+  // Delete file (move to trash)
+  const deleteFile = useCallback(async (fileId) => {
+    const fileToDelete = files.find(f => f.id === fileId)
+    if (!fileToDelete) return
+    
+    const updatedFiles = files.filter(f => f.id !== fileId)
+    const updatedTrash = [...trash, { ...fileToDelete, isTrashed: true, deletedAt: Date.now() }]
+    
+    setFiles(updatedFiles)
+    setTrash(updatedTrash)
+    setSelectedFiles(prev => prev.filter(id => id !== fileId))
+    
+    // Bug 3 fix - kirim data langsung
+    await saveData({ files: updatedFiles, folders, trash: updatedTrash })
+  }, [files, trash, saveData])
+
+  // Restore from trash
+  const restoreFile = useCallback(async (fileId) => {
+    const fileToRestore = trash.find(f => f.id === fileId)
+    if (!fileToRestore) return
+    
+    const { deletedAt, isTrashed, ...restoredFile } = fileToRestore
+    const updatedTrash = trash.filter(f => f.id !== fileId)
+    const updatedFiles = [...files, restoredFile]
+    
+    setTrash(updatedTrash)
+    setFiles(updatedFiles)
+    
+    // Bug 3 fix
+    await saveData({ files: updatedFiles, folders, trash: updatedTrash })
+  }, [files, trash, saveData])
+
+  // Permanent delete
+  const permanentDelete = useCallback(async (fileId) => {
+    const updatedTrash = trash.filter(f => f.id !== fileId)
+    setTrash(updatedTrash)
+    
+    // Bug 3 fix
+    await saveData({ files, folders, trash: updatedTrash })
+  }, [files, folders, trash, saveData])
+
+  // Toggle star
+  const toggleStar = useCallback(async (fileId) => {
+    const updatedFiles = files.map(f => 
+      f.id === fileId ? { ...f, isStarred: !f.isStarred } : f
+    )
+    setFiles(updatedFiles)
+    
+    // Bug 3 fix
+    await saveData({ files: updatedFiles, folders, trash })
+  }, [files, folders, trash, saveData])
+
+  // Create folder
+  const createFolder = useCallback(async (name) => {
     const newFolder = {
-      id: `folder_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      name: newFolderName.trim(),
-      parentId: currentFolderId,
-      createdAt: Date.now(),
-      updatedAt: Date.now()
+      id: `folder_${Date.now()}`,
+      name: name || 'Folder Baru',
+      parentId: currentFolder,
+      createdAt: Date.now()
     }
     
     const updatedFolders = [...folders, newFolder]
     setFolders(updatedFolders)
-    setNewFolderName('')
-    setShowNewFolder(false)
-    saveData()
-  }, [folders, currentFolderId, newFolderName])
-
-  const deleteItem = useCallback((item) => {
-    if (item.type === 'folder') {
-      // Move folder to trash (soft delete)
-      const updatedFolders = folders.filter(f => f.id !== item.id)
-      setFolders(updatedFolders)
-    } else {
-      // Move file to trash
-      const updatedFiles = files.map(f => 
-        f.id === item.id ? { ...f, isTrashed: true, trashedAt: Date.now() } : f
-      )
-      setFiles(updatedFiles)
-      setTrash([...trash, { ...item, isTrashed: true, trashedAt: Date.now() }])
-    }
     
-    setSelectedItems([])
-    saveData()
-  }, [files, folders, trash])
-
-  const restoreItem = useCallback((item) => {
-    if (item.type === 'folder') {
-      // Restore folder
-      const updatedFolders = [...folders, { ...item, isTrashed: false }]
-      setFolders(updatedFolders)
-    } else {
-      // Restore file
-      const updatedFiles = files.map(f => 
-        f.id === item.id ? { ...f, isTrashed: false, trashedAt: null } : f
-      )
-      setFiles(updatedFiles)
-    }
-    
-    const updatedTrash = trash.filter(t => t.id !== item.id)
-    setTrash(updatedTrash)
-    saveData()
-  }, [files, folders, trash])
-
-  const permanentDelete = useCallback((item) => {
-    const updatedTrash = trash.filter(t => t.id !== item.id)
-    setTrash(updatedTrash)
-    
-    if (item.type !== 'folder') {
-      const updatedFiles = files.filter(f => f.id !== item.id)
-      setFiles(updatedFiles)
-      calculateStorage(updatedFiles)
-    }
-    
-    saveData()
-  }, [files, trash])
-
-  const toggleStar = useCallback((item) => {
-    if (item.type === 'folder') {
-      const updated = folders.map(f => 
-        f.id === item.id ? { ...f, isStarred: !f.isStarred } : f
-      )
-      setFolders(updated)
-    } else {
-      const updated = files.map(f => 
-        f.id === item.id ? { ...f, isStarred: !f.isStarred } : f
-      )
-      setFiles(updated)
-    }
-    saveData()
-  }, [files, folders])
-
-  const renameItem = useCallback((item, newName) => {
-    if (!newName.trim()) return
-    
-    if (item.type === 'folder') {
-      const updated = folders.map(f => 
-        f.id === item.id ? { ...f, name: newName.trim(), updatedAt: Date.now() } : f
-      )
-      setFolders(updated)
-    } else {
-      const updated = files.map(f => 
-        f.id === item.id ? { ...f, name: newName.trim(), updatedAt: Date.now() } : f
-      )
-      setFiles(updated)
-    }
-    saveData()
-  }, [files, folders])
-
-  // Get filtered items
-  const getCurrentItems = () => {
-    let items = []
-    
-    if (activeTab === 'trash') {
-      return trash.map(t => ({ ...t, type: t.type || 'file' }))
-    }
-    
-    if (activeTab === 'starred') {
-      items = [
-        ...folders.filter(f => f.isStarred && !f.isTrashed),
-        ...files.filter(f => f.isStarred && !f.isTrashed)
-      ]
-    } else if (activeTab === 'shared') {
-      items = files.filter(f => f.isShared && !f.isTrashed)
-    } else {
-      // All files in current folder
-      items = [
-        ...folders.filter(f => f.parentId === currentFolderId && !f.isTrashed),
-        ...files.filter(f => f.folderId === currentFolderId && !f.isTrashed)
-      ]
-    }
-    
-    // Search filter
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase()
-      items = items.filter(item => item.name.toLowerCase().includes(query))
-    }
-    
-    // Sort
-    items.sort((a, b) => {
-      let comparison = 0
-      switch (sortBy) {
-        case 'name':
-          comparison = a.name.localeCompare(b.name)
-          break
-        case 'date':
-          comparison = (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt)
-          break
-        case 'size':
-          comparison = (b.size || 0) - (a.size || 0)
-          break
-        case 'type':
-          comparison = (a.type || '').localeCompare(b.type || '')
-          break
-        default:
-          comparison = 0
-      }
-      return sortOrder === 'asc' ? comparison : -comparison
-    })
-    
-    return items
-  }
+    // Bug 3 fix
+    await saveData({ files, folders: updatedFolders, trash })
+  }, [files, folders, trash, currentFolder, saveData])
 
   // Get file icon
-  const getFileIcon = (item) => {
-    if (item.type === 'folder') return FILE_ICONS.folder
-    
-    const type = item.type || ''
-    if (type.startsWith('image/')) return FILE_ICONS.image
-    if (type.startsWith('video/')) return FILE_ICONS.video
-    if (type.startsWith('audio/')) return FILE_ICONS.audio
-    if (type === 'application/pdf') return FILE_ICONS.pdf
-    if (type.startsWith('text/') || type.includes('json') || type.includes('javascript')) return FILE_ICONS.text
-    if (type.includes('zip') || type.includes('rar') || type.includes('7z')) return FILE_ICONS.archive
-    return FILE_ICONS.unknown
+  const getFileIcon = (type) => {
+    if (type.startsWith('image/')) return <Image size={20} />
+    if (type.startsWith('text/')) return <FileText size={20} />
+    if (type.includes('json') || type.includes('javascript')) return <Code size={20} />
+    return <File size={20} />
   }
 
-  // Format file size
-  const formatSize = (bytes) => {
-    if (!bytes) return '0 B'
-    const sizes = ['B', 'KB', 'MB', 'GB']
-    const i = Math.floor(Math.log(bytes) / Math.log(1024))
-    return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${sizes[i]}`
-  }
+  // Filter files
+  const filteredFiles = files.filter(f => {
+    if (showTrash) return f.isTrashed
+    if (f.isTrashed) return false
+    if (currentFolder !== 'root' && f.folderId !== currentFolder) return false
+    if (searchQuery && !f.name.toLowerCase().includes(searchQuery.toLowerCase())) return false
+    return true
+  })
 
-  // Format date
-  const formatDate = (timestamp) => {
-    if (!timestamp) return '-'
-    const date = new Date(timestamp)
-    return date.toLocaleDateString('id-ID', {
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric'
-    })
-  }
-
-  // Context menu
-  const handleContextMenu = (e, item) => {
-    e.preventDefault()
-    setContextMenu({
-      x: e.clientX,
-      y: e.clientY,
-      item
-    })
-  }
-
-  // Share functionality
-  const shareItem = useCallback((item) => {
-    const updated = files.map(f => 
-      f.id === item.id ? { ...f, isShared: true, shareId: `share_${Date.now()}` } : f
-    )
-    setFiles(updated)
-    saveData()
-    
-    // Copy share link to clipboard
-    const shareLink = `${window.location.origin}/share/${item.shareId}`
-    navigator.clipboard.writeText(shareLink).catch(() => {})
-  }, [files])
-
-  // Download
-  const downloadItem = (item) => {
-    if (!item.content) return
-    const link = document.createElement('a')
-    link.href = item.content
-    link.download = item.name
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-  }
-
-  // Preview
-  const openPreview = (item) => {
-    setPreviewItem(item)
-  }
-
-  // Close context menu on click outside
-  useEffect(() => {
-    const handleClick = () => setContextMenu(null)
-    window.addEventListener('click', handleClick)
-    return () => window.removeEventListener('click', handleClick)
-  }, [])
-
-  const currentItems = getCurrentItems()
-  const breadcrumb = getBreadcrumb()
+  const starredFiles = files.filter(f => f.isStarred && !f.isTrashed)
 
   return (
     <div className="gudang-page">
       {/* Header */}
       <div className="gudang-header">
         <div className="gudang-header-left">
-          <button className="gudang-back" onClick={goBack}>⬅</button>
+          <button className="gudang-back" onClick={() => navigate('/skyroom')}>
+            <ArrowLeft size={20} />
+          </button>
           <h1 className="gudang-title">📦 Gudang</h1>
         </div>
         <div className="gudang-header-right">
           <button 
-            className={`gudang-search-btn ${showSearch ? 'active' : ''}`} 
-            onClick={() => setShowSearch(!showSearch)}
+            className={`gudang-view-btn ${viewMode === 'grid' ? 'active' : ''}`}
+            onClick={() => setViewMode('grid')}
           >
-            🔍
+            ⊞
           </button>
-          <button className="gudang-view-btn" onClick={() => setViewMode(v => v === 'grid' ? 'list' : 'grid')}>
-            {viewMode === 'grid' ? '☰' : '⊞'}
+          <button 
+            className={`gudang-view-btn ${viewMode === 'list' ? 'active' : ''}`}
+            onClick={() => setViewMode('list')}
+          >
+            ☰
           </button>
-          <button className="gudang-more-btn" onClick={() => setShowActionMenu(!showActionMenu)}>⋮</button>
         </div>
       </div>
 
       {/* Search Bar */}
-      {showSearch && (
-        <div className="gudang-search-bar animate-fade-in">
-          <input
-            type="text"
-            placeholder="Cari file atau folder..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            autoFocus
-          />
-          {searchQuery && (
-            <button className="search-clear" onClick={() => setSearchQuery('')}>✕</button>
-          )}
-        </div>
-      )}
+      <div className="gudang-search">
+        <input
+          type="text"
+          placeholder="Cari file..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="gudang-search-input"
+        />
+      </div>
 
-      {/* Tabs */}
-      <div className="gudang-tabs">
-        <button 
-          className={`gudang-tab ${activeTab === 'all' ? 'active' : ''}`}
-          onClick={() => setActiveTab('all')}
-        >
-          📁 Semua
-        </button>
-        <button 
-          className={`gudang-tab ${activeTab === 'starred' ? 'active' : ''}`}
-          onClick={() => setActiveTab('starred')}
-        >
-          ⭐ Favorit
-        </button>
-        <button 
-          className={`gudang-tab ${activeTab === 'shared' ? 'active' : ''}`}
-          onClick={() => setActiveTab('shared')}
-        >
-          📤 Dibagikan
-        </button>
-        <button 
-          className={`gudang-tab ${activeTab === 'trash' ? 'active' : ''}`}
-          onClick={() => setActiveTab('trash')}
-        >
-          🗑️ Sampah
+      {/* Folders */}
+      <div className="gudang-folders">
+        {folders.map(folder => (
+          <button
+            key={folder.id}
+            className={`gudang-folder ${currentFolder === folder.id ? 'active' : ''}`}
+            onClick={() => setCurrentFolder(folder.id)}
+          >
+            <Folder size={16} />
+            <span>{folder.name}</span>
+          </button>
+        ))}
+        <button className="gudang-folder" onClick={() => createFolder()}>
+          <span>+</span>
+          <span>Baru</span>
         </button>
       </div>
 
-      {/* Breadcrumb */}
-      {activeTab === 'all' && (
-        <div className="gudang-breadcrumb">
-          {breadcrumb.map((folder, index) => (
-            <React.Fragment key={folder.id}>
-              {index > 0 && <span className="breadcrumb-sep">/</span>}
-              <button 
-                className={`breadcrumb-item ${index === breadcrumb.length - 1 ? 'current' : ''}`}
-                onClick={() => index < breadcrumb.length - 1 && setCurrentFolderId(folder.id)}
-              >
-                {folder.name}
-              </button>
-            </React.Fragment>
-          ))}
+      {/* Upload Progress Bar (Bug 4 fix) */}
+      {uploading && (
+        <div className="upload-progress-container">
+          <div className="upload-progress-bar">
+            <div 
+              className="upload-progress-fill" 
+              style={{ width: `${uploadProgress}%` }}
+            />
+          </div>
+          <span className="upload-progress-text">{uploadProgress}%</span>
         </div>
       )}
 
-      {/* Sort Bar */}
-      <div className="gudang-sort">
-        <span className="sort-label">Urutkan:</span>
-        <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
-          <option value="name">Nama</option>
-          <option value="date">Tanggal</option>
-          <option value="size">Ukuran</option>
-          <option value="type">Tipe</option>
-        </select>
-        <button 
-          className="sort-order" 
-          onClick={() => setSortOrder(o => o === 'asc' ? 'desc' : 'asc')}
-        >
-          {sortOrder === 'asc' ? '↑' : '↓'}
-        </button>
-      </div>
+      {/* Error Message */}
+      {uploadError && (
+        <div className="gudang-error">
+          ⚠️ {uploadError}
+          <button onClick={() => setUploadError(null)}>✕</button>
+        </div>
+      )}
 
-      {/* Content */}
-      <div className={`gudang-content ${viewMode}`}>
-        {currentItems.length === 0 ? (
+      {/* Starred Section */}
+      {starredFiles.length > 0 && !showTrash && !searchQuery && (
+        <div className="gudang-section">
+          <h3 className="gudang-section-title">⭐ Favorit</h3>
+          <div className={`gudang-files ${viewMode}`}>
+            {starredFiles.map(file => (
+              <div key={file.id} className="gudang-file starred">
+                <div className="file-icon">{getFileIcon(file.type)}</div>
+                <div className="file-info">
+                  <span className="file-name">{file.name}</span>
+                  <span className="file-meta">{formatSize(file.size)}</span>
+                </div>
+                <button className="file-star active" onClick={() => toggleStar(file.id)}>
+                  <Star size={16} fill="#FF6B00" />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Files Section */}
+      <div className="gudang-section">
+        <h3 className="gudang-section-title">
+          {showTrash ? '🗑️ Sampah' : '📁 File'}
+        </h3>
+        
+        {filteredFiles.length === 0 ? (
           <div className="gudang-empty">
-            <div className="empty-icon">{activeTab === 'trash' ? '🗑️' : '📂'}</div>
-            <p className="empty-text">
-              {activeTab === 'trash' 
-                ? 'Sampah kosong' 
-                : searchQuery 
-                  ? 'Tidak ada hasil pencarian' 
-                  : 'Folder ini kosong'
-              }
-            </p>
-            {activeTab !== 'trash' && !searchQuery && (
-              <button className="empty-action" onClick={() => fileInputRef.current?.click()}>
-                Upload File Pertama
-              </button>
-            )}
+            {showTrash ? 'Sampah kosong' : 'Belum ada file'}
           </div>
         ) : (
-          currentItems.map(item => (
-            <div
-              key={item.id}
-              className={`gudang-item ${selectedItems.includes(item.id) ? 'selected' : ''}`}
-              onClick={() => item.type === 'folder' ? setCurrentFolderId(item.id) : openPreview(item)}
-              onContextMenu={(e) => handleContextMenu(e, item)}
-            >
-              {viewMode === 'grid' ? (
-                <>
-                  <div className="item-icon">{getFileIcon(item)}</div>
-                  <div className="item-name" title={item.name}>{item.name}</div>
-                  <div className="item-meta">
-                    {item.type === 'folder' 
-                      ? `${item.itemCount || 0} item` 
-                      : formatSize(item.size)
-                    }
-                  </div>
-                  {item.isStarred && <div className="item-star">⭐</div>}
-                </>
-              ) : (
-                <>
-                  <div className="list-icon">{getFileIcon(item)}</div>
-                  <div className="list-name">{item.name}</div>
-                  <div className="list-type">{item.type === 'folder' ? 'Folder' : (item.type || 'File').split('/')[1] || 'File'}</div>
-                  <div className="list-size">{item.type === 'folder' ? '-' : formatSize(item.size)}</div>
-                  <div className="list-date">{formatDate(item.updatedAt || item.createdAt)}</div>
-                  {item.isStarred && <div className="list-star">⭐</div>}
-                </>
-              )}
-            </div>
-          ))
+          <div className={`gudang-files ${viewMode}`}>
+            {filteredFiles.map(file => (
+              <div 
+                key={file.id} 
+                className={`gudang-file ${selectedFiles.includes(file.id) ? 'selected' : ''}`}
+                onClick={() => {
+                  if (selectedFiles.includes(file.id)) {
+                    setSelectedFiles(prev => prev.filter(id => id !== file.id))
+                  } else {
+                    setSelectedFiles(prev => [...prev, file.id])
+                  }
+                }}
+              >
+                <div className="file-icon">{getFileIcon(file.type)}</div>
+                <div className="file-info">
+                  <span className="file-name">{file.name}</span>
+                  <span className="file-meta">{formatSize(file.size)}</span>
+                </div>
+                
+                {!showTrash && (
+                  <button 
+                    className={`file-star ${file.isStarred ? 'active' : ''}`}
+                    onClick={(e) => { e.stopPropagation(); toggleStar(file.id) }}
+                  >
+                    <Star size={16} fill={file.isStarred ? '#FF6B00' : 'none'} />
+                  </button>
+                )}
+                
+                {showTrash ? (
+                  <button 
+                    className="file-restore"
+                    onClick={(e) => { e.stopPropagation(); restoreFile(file.id) }}
+                  >
+                    Restore
+                  </button>
+                ) : (
+                  <button 
+                    className="file-delete"
+                    onClick={(e) => { e.stopPropagation(); deleteFile(file.id) }}
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
         )}
       </div>
 
-      {/* Storage Bar */}
-      <div className="gudang-storage">
-        <div className="storage-info">
-          <span>💾 {formatSize(storageUsed)} / {formatSize(storageLimit)}</span>
-          <span>{Math.round((storageUsed / storageLimit) * 100)}%</span>
-        </div>
-        <div className="storage-bar">
-          <div 
-            className="storage-fill" 
-            style={{ width: `${Math.min((storageUsed / storageLimit) * 100, 100)}%` }}
-          />
-        </div>
-      </div>
-
-      {/* Bottom Action Bar */}
-      <div className="gudang-bottom-bar">
-        <button className="bottom-btn" onClick={() => setShowNewFolder(true)}>
-          <span>📁</span>
-          <span>Baru</span>
-        </button>
-        <button className="bottom-btn" onClick={() => fileInputRef.current?.click()}>
-          <span>⬆️</span>
+      {/* Action Bar */}
+      <div className="gudang-actions">
+        <button 
+          className="gudang-action-btn"
+          onClick={() => setShowUpload(true)}
+          disabled={uploading}
+        >
+          <Upload size={18} />
           <span>Upload</span>
         </button>
-        <button className="bottom-btn" onClick={() => {}}>
-          <span>📤</span>
-          <span>Share</span>
+        
+        <button 
+          className={`gudang-action-btn ${showTrash ? 'active' : ''}`}
+          onClick={() => setShowTrash(!showTrash)}
+        >
+          <Trash2 size={18} />
+          <span>{showTrash ? 'File' : 'Sampah'}</span>
         </button>
-        <button className="bottom-btn" onClick={() => setActiveTab('trash')}>
-          <span>🗑️</span>
-          <span>Sampah</span>
-        </button>
-        <button className="bottom-btn" onClick={() => setShowActionMenu(true)}>
-          <span>➕</span>
-          <span>Lainnya</span>
-        </button>
+        
+        {selectedFiles.length > 0 && (
+          <button 
+            className="gudang-action-btn danger"
+            onClick={() => {
+              selectedFiles.forEach(id => deleteFile(id))
+              setSelectedFiles([])
+            }}
+          >
+            <Trash2 size={18} />
+            <span>Hapus ({selectedFiles.length})</span>
+          </button>
+        )}
       </div>
 
-      {/* Hidden File Input */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        multiple
-        style={{ display: 'none' }}
-        onChange={handleFileUpload}
-      />
-
-      {/* New Folder Modal */}
-      {showNewFolder && (
-        <div className="modal-overlay" onClick={() => setShowNewFolder(false)}>
-          <div className="modal-content" onClick={e => e.stopPropagation()}>
-            <h3>Buat Folder Baru</h3>
-            <input
-              type="text"
-              placeholder="Nama folder..."
-              value={newFolderName}
-              onChange={(e) => setNewFolderName(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && createFolder()}
-              autoFocus
-            />
-            <div className="modal-actions">
-              <button className="modal-cancel" onClick={() => setShowNewFolder(false)}>Batal</button>
-              <button className="modal-confirm" onClick={createFolder}>Buat</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Preview Modal */}
-      {previewItem && (
-        <div className="preview-overlay" onClick={() => setPreviewItem(null)}>
-          <div className="preview-content" onClick={e => e.stopPropagation()}>
-            <div className="preview-header">
-              <span className="preview-title">{previewItem.name}</span>
-              <button className="preview-close" onClick={() => setPreviewItem(null)}>✕</button>
-            </div>
-            <div className="preview-body">
-              {previewItem.type?.startsWith('image/') ? (
-                <img src={previewItem.content} alt={previewItem.name} className="preview-image" />
-              ) : previewItem.type?.startsWith('video/') ? (
-                <video src={previewItem.content} controls className="preview-video" />
-              ) : previewItem.type?.startsWith('audio/') ? (
-                <audio src={previewItem.content} controls className="preview-audio" />
-              ) : previewItem.type === 'application/pdf' ? (
-                <iframe src={previewItem.content} className="preview-pdf" title={previewItem.name} />
-              ) : (
-                <div className="preview-text">
-                  <pre>{previewItem.content?.substring(0, 1000) || 'Tidak dapat menampilkan preview'}</pre>
+      {/* Upload Modal */}
+      {showUpload && (
+        <div className="modal-overlay" onClick={() => !uploading && setShowUpload(false)}>
+          <div className="modal-content upload-modal" onClick={e => e.stopPropagation()}>
+            <h3>📤 Upload File</h3>
+            <p>Maksimal 5MB per file, total 10MB</p>
+            
+            <label className="upload-area">
+              <input
+                type="file"
+                multiple
+                onChange={handleFileUpload}
+                disabled={uploading}
+                style={{ display: 'none' }}
+              />
+              <div className={`upload-dropzone ${uploading ? 'disabled' : ''}`}>
+                <Upload size={32} />
+                <span>{uploading ? 'Mengupload...' : 'Tap untuk pilih file'}</span>
+              </div>
+            </label>
+            
+            {uploading && (
+              <div className="upload-modal-progress">
+                <div className="upload-modal-bar">
+                  <div className="upload-modal-fill" style={{ width: `${uploadProgress}%` }} />
                 </div>
-              )}
-            </div>
-            <div className="preview-actions">
-              <button onClick={() => downloadItem(previewItem)}>⬇️ Download</button>
-              <button onClick={() => shareItem(previewItem)}>📤 Share</button>
-              <button onClick={() => { toggleStar(previewItem); setPreviewItem(null) }}>
-                {previewItem.isStarred ? '⭐ Batal Favorit' : '⭐ Favorit'}
-              </button>
-            </div>
+                <span>{uploadProgress}%</span>
+              </div>
+            )}
+            
+            <button 
+              className="modal-cancel" 
+              onClick={() => !uploading && setShowUpload(false)}
+              disabled={uploading}
+            >
+              Batal
+            </button>
           </div>
-        </div>
-      )}
-
-      {/* Context Menu */}
-      {contextMenu && (
-        <div 
-          className="context-menu"
-          style={{ top: contextMenu.y, left: contextMenu.x }}
-        >
-          <button onClick={() => { toggleStar(contextMenu.item); setContextMenu(null) }}>
-            {contextMenu.item.isStarred ? '⭐ Batal Favorit' : '⭐ Tambah Favorit'}
-          </button>
-          <button onClick={() => { downloadItem(contextMenu.item); setContextMenu(null) }}>⬇️ Download</button>
-          <button onClick={() => { shareItem(contextMenu.item); setContextMenu(null) }}>📤 Share</button>
-          <button onClick={() => { 
-            const newName = prompt('Nama baru:', contextMenu.item.name)
-            if (newName) renameItem(contextMenu.item, newName)
-            setContextMenu(null)
-          }}>✏️ Ganti Nama</button>
-          <div className="context-divider" />
-          <button 
-            className="context-danger"
-            onClick={() => { deleteItem(contextMenu.item); setContextMenu(null) }}
-          >
-            🗑️ {activeTab === 'trash' ? 'Hapus Permanen' : 'Pindah ke Sampah'}
-          </button>
         </div>
       )}
 
@@ -684,7 +533,6 @@ function Gudang() {
           overflow: hidden;
         }
 
-        /* Header */
         .gudang-header {
           display: flex;
           align-items: center;
@@ -705,9 +553,10 @@ function Gudang() {
           background: none;
           border: none;
           color: #8B92A8;
-          font-size: 20px;
           cursor: pointer;
           padding: 8px;
+          display: flex;
+          align-items: center;
         }
 
         .gudang-title {
@@ -719,362 +568,289 @@ function Gudang() {
 
         .gudang-header-right {
           display: flex;
-          align-items: center;
           gap: 8px;
         }
 
-        .gudang-search-btn,
-        .gudang-view-btn,
-        .gudang-more-btn {
-          background: none;
-          border: none;
-          color: #8B92A8;
-          font-size: 18px;
-          cursor: pointer;
-          padding: 8px;
-          border-radius: 8px;
-          transition: all 200ms ease;
-        }
-
-        .gudang-search-btn.active,
-        .gudang-search-btn:hover,
-        .gudang-view-btn:hover,
-        .gudang-more-btn:hover {
-          background: rgba(255, 255, 255, 0.05);
-          color: #FFFFFF;
-        }
-
-        /* Search Bar */
-        .gudang-search-bar {
-          padding: 8px 16px;
-          border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-          position: relative;
-        }
-
-        .gudang-search-bar input {
-          width: 100%;
-          padding: 10px 36px 10px 14px;
+        .gudang-view-btn {
           background: rgba(255, 255, 255, 0.05);
           border: 1px solid rgba(255, 255, 255, 0.08);
-          border-radius: 12px;
+          border-radius: 8px;
+          color: #8B92A8;
+          font-size: 16px;
+          cursor: pointer;
+          padding: 6px 10px;
+        }
+
+        .gudang-view-btn.active {
+          background: rgba(255, 107, 0, 0.15);
+          color: #FF6B00;
+          border-color: rgba(255, 107, 0, 0.3);
+        }
+
+        .gudang-search {
+          padding: 8px 16px;
+          flex-shrink: 0;
+        }
+
+        .gudang-search-input {
+          width: 100%;
+          padding: 10px 14px;
+          background: rgba(255, 255, 255, 0.05);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 10px;
           color: #FFFFFF;
           font-size: 14px;
           outline: none;
         }
 
-        .gudang-search-bar input::placeholder {
+        .gudang-search-input::placeholder {
           color: #8B92A8;
         }
 
-        .search-clear {
-          position: absolute;
-          right: 24px;
-          top: 50%;
-          transform: translateY(-50%);
-          background: none;
-          border: none;
-          color: #8B92A8;
-          cursor: pointer;
-          font-size: 14px;
-        }
-
-        /* Tabs */
-        .gudang-tabs {
+        .gudang-folders {
           display: flex;
-          gap: 4px;
+          gap: 8px;
           padding: 8px 16px;
           overflow-x: auto;
           flex-shrink: 0;
-          border-bottom: 1px solid rgba(255, 255, 255, 0.05);
         }
 
-        .gudang-tab {
-          padding: 8px 16px;
-          background: none;
-          border: none;
-          color: #8B92A8;
-          font-size: 13px;
-          cursor: pointer;
-          border-radius: 20px;
-          white-space: nowrap;
-          transition: all 200ms ease;
-        }
-
-        .gudang-tab.active {
-          background: rgba(255, 107, 0, 0.15);
-          color: #FF6B00;
-          font-weight: 500;
-        }
-
-        /* Breadcrumb */
-        .gudang-breadcrumb {
+        .gudang-folder {
           display: flex;
-          align-items: center;
-          gap: 8px;
-          padding: 8px 16px;
-          font-size: 13px;
-          flex-shrink: 0;
-        }
-
-        .breadcrumb-item {
-          background: none;
-          border: none;
-          color: #8B92A8;
-          cursor: pointer;
-          font-size: 13px;
-        }
-
-        .breadcrumb-item.current {
-          color: #FFFFFF;
-          font-weight: 500;
-          cursor: default;
-        }
-
-        .breadcrumb-sep {
-          color: #8B92A8;
-          opacity: 0.5;
-        }
-
-        /* Sort */
-        .gudang-sort {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          padding: 8px 16px;
-          font-size: 12px;
-          color: #8B92A8;
-          flex-shrink: 0;
-        }
-
-        .gudang-sort select {
-          background: rgba(255, 255, 255, 0.05);
-          border: 1px solid rgba(255, 255, 255, 0.08);
-          border-radius: 6px;
-          color: #FFFFFF;
-          padding: 4px 8px;
-          font-size: 12px;
-          outline: none;
-        }
-
-        .sort-order {
-          background: rgba(255, 255, 255, 0.05);
-          border: 1px solid rgba(255, 255, 255, 0.08);
-          border-radius: 6px;
-          color: #FFFFFF;
-          padding: 4px 8px;
-          cursor: pointer;
-        }
-
-        /* Content */
-        .gudang-content {
-          flex: 1;
-          overflow-y: auto;
-          padding: 8px;
-        }
-
-        .gudang-content.grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-          gap: 12px;
-          padding: 12px;
-        }
-
-        .gudang-content.list {
-          display: flex;
-          flex-direction: column;
-          gap: 2px;
-          padding: 0 12px;
-        }
-
-        /* Grid Item */
-        .gudang-item {
-          display: flex;
-          flex-direction: column;
           align-items: center;
           gap: 6px;
-          padding: 16px 8px;
-          background: rgba(255, 255, 255, 0.03);
-          border: 1px solid rgba(255, 255, 255, 0.06);
-          border-radius: 16px;
-          cursor: pointer;
-          transition: all 200ms ease;
-          position: relative;
-        }
-
-        .gudang-item:hover,
-        .gudang-item.selected {
-          background: rgba(255, 107, 0, 0.08);
-          border-color: rgba(255, 107, 0, 0.2);
-        }
-
-        .item-icon {
-          font-size: 40px;
-          line-height: 1;
-        }
-
-        .item-name {
-          font-size: 12px;
-          color: #FFFFFF;
-          text-align: center;
-          width: 100%;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-
-        .item-meta {
-          font-size: 11px;
-          color: #8B92A8;
-        }
-
-        .item-star {
-          position: absolute;
-          top: 8px;
-          right: 8px;
-          font-size: 12px;
-        }
-
-        /* List Item */
-        .gudang-content.list .gudang-item {
-          flex-direction: row;
-          padding: 12px 16px;
-          border-radius: 12px;
-          gap: 12px;
-        }
-
-        .list-icon {
-          font-size: 24px;
-          flex-shrink: 0;
-        }
-
-        .list-name {
-          flex: 1;
-          font-size: 14px;
-          color: #FFFFFF;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-
-        .list-type,
-        .list-size,
-        .list-date {
-          font-size: 12px;
-          color: #8B92A8;
-          flex-shrink: 0;
-          width: 80px;
-          text-align: right;
-        }
-
-        .list-type { width: 100px; text-align: left; }
-n        .list-star {
-          font-size: 12px;
-          flex-shrink: 0;
-        }
-
-        /* Empty State */
-        .gudang-empty {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          height: 100%;
-          gap: 16px;
-          padding: 40px;
-        }
-
-        .empty-icon {
-          font-size: 64px;
-          opacity: 0.5;
-        }
-
-        .empty-text {
-          font-size: 14px;
-          color: #8B92A8;
-          text-align: center;
-        }
-
-        .empty-action {
-          padding: 12px 24px;
-          background: linear-gradient(180deg, #FF6B00 0%, #FF8C00 100%);
-          border: none;
-          border-radius: 12px;
-          color: #FFFFFF;
-          font-size: 14px;
-          font-weight: 500;
-          cursor: pointer;
-          transition: all 200ms ease;
-        }
-
-        .empty-action:hover {
-          transform: translateY(-1px);
-          box-shadow: 0 4px 16px rgba(255, 107, 0, 0.3);
-        }
-
-        /* Storage Bar */
-        .gudang-storage {
-          padding: 12px 16px;
-          border-top: 1px solid rgba(255, 255, 255, 0.05);
-          flex-shrink: 0;
-        }
-
-        .storage-info {
-          display: flex;
-          justify-content: space-between;
-          font-size: 12px;
-          color: #8B92A8;
-          margin-bottom: 6px;
-        }
-
-        .storage-bar {
-          width: 100%;
-          height: 4px;
+          padding: 8px 14px;
           background: rgba(255, 255, 255, 0.05);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 20px;
+          color: #8B92A8;
+          font-size: 13px;
+          cursor: pointer;
+          white-space: nowrap;
+          transition: all 200ms ease;
+        }
+
+        .gudang-folder.active {
+          background: rgba(255, 107, 0, 0.15);
+          color: #FF6B00;
+          border-color: rgba(255, 107, 0, 0.3);
+        }
+
+        /* Upload Progress Bar (Bug 4) */
+        .upload-progress-container {
+          padding: 8px 16px;
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          flex-shrink: 0;
+        }
+
+        .upload-progress-bar {
+          flex: 1;
+          height: 4px;
+          background: rgba(255, 255, 255, 0.1);
           border-radius: 2px;
           overflow: hidden;
         }
 
-        .storage-fill {
+        .upload-progress-fill {
           height: 100%;
           background: linear-gradient(90deg, #FF6B00, #FF8C00);
           border-radius: 2px;
-          transition: width 400ms ease;
+          transition: width 300ms ease;
         }
 
-        /* Bottom Bar */
-        .gudang-bottom-bar {
+        .upload-progress-text {
+          font-size: 11px;
+          color: #FF6B00;
+          font-weight: 500;
+          min-width: 32px;
+        }
+
+        .gudang-error {
+          padding: 10px 16px;
+          background: rgba(239, 68, 68, 0.1);
+          color: #EF4444;
+          font-size: 12px;
           display: flex;
-          justify-content: space-around;
           align-items: center;
-          padding: 8px 0;
-          border-top: 1px solid rgba(255, 255, 255, 0.05);
+          justify-content: space-between;
           flex-shrink: 0;
-          background: rgba(10, 14, 26, 0.95);
-          backdrop-filter: blur(12px);
         }
 
-        .bottom-btn {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          gap: 2px;
+        .gudang-error button {
           background: none;
           border: none;
-          color: #8B92A8;
-          font-size: 10px;
+          color: #EF4444;
           cursor: pointer;
-          padding: 8px 12px;
+          font-size: 14px;
+        }
+
+        .gudang-section {
+          flex: 1;
+          overflow-y: auto;
+          padding: 0 16px;
+        }
+
+        .gudang-section-title {
+          font-size: 14px;
+          color: #8B92A8;
+          margin: 12px 0 8px;
+          font-weight: 500;
+        }
+
+        .gudang-empty {
+          color: #8B92A8;
+          text-align: center;
+          padding: 40px;
+          font-size: 14px;
+        }
+
+        .gudang-files {
+          display: grid;
+          gap: 8px;
+        }
+
+        .gudang-files.grid {
+          grid-template-columns: repeat(2, 1fr);
+        }
+
+        .gudang-files.list {
+          grid-template-columns: 1fr;
+        }
+
+        .gudang-file {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          padding: 12px;
+          background: rgba(255, 255, 255, 0.03);
+          border: 1px solid rgba(255, 255, 255, 0.06);
           border-radius: 12px;
+          cursor: pointer;
           transition: all 200ms ease;
         }
 
-        .bottom-btn:hover {
-          color: #FFFFFF;
-          background: rgba(255, 255, 255, 0.05);
+        .gudang-file:hover {
+          background: rgba(255, 255, 255, 0.06);
         }
 
-        .bottom-btn span:first-child {
-          font-size: 20px;
+        .gudang-file.selected {
+          border-color: rgba(255, 107, 0, 0.3);
+          background: rgba(255, 107, 0, 0.05);
+        }
+
+        .gudang-file.starred {
+          border-color: rgba(255, 107, 0, 0.15);
+        }
+
+        .file-icon {
+          color: #8B92A8;
+          flex-shrink: 0;
+        }
+
+        .file-info {
+          flex: 1;
+          min-width: 0;
+        }
+
+        .file-name {
+          display: block;
+          color: #FFFFFF;
+          font-size: 14px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .file-meta {
+          display: block;
+          color: #8B92A8;
+          font-size: 11px;
+          margin-top: 2px;
+        }
+
+        .file-star {
+          background: none;
+          border: none;
+          color: #8B92A8;
+          cursor: pointer;
+          padding: 4px;
+          flex-shrink: 0;
+        }
+
+        .file-star.active {
+          color: #FF6B00;
+        }
+
+        .file-delete {
+          background: none;
+          border: none;
+          color: #EF4444;
+          cursor: pointer;
+          padding: 4px;
+          flex-shrink: 0;
+          opacity: 0;
+          transition: opacity 200ms ease;
+        }
+
+        .gudang-file:hover .file-delete {
+          opacity: 1;
+        }
+
+        .file-restore {
+          background: rgba(59, 130, 246, 0.15);
+          border: none;
+          color: #3B82F6;
+          padding: 6px 12px;
+          border-radius: 8px;
+          font-size: 12px;
+          cursor: pointer;
+        }
+
+        .gudang-actions {
+          display: flex;
+          gap: 8px;
+          padding: 12px 16px;
+          border-top: 1px solid rgba(255, 255, 255, 0.05);
+          flex-shrink: 0;
+          overflow-x: auto;
+        }
+
+        .gudang-action-btn {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 10px 16px;
+          background: rgba(255, 255, 255, 0.05);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 10px;
+          color: #FFFFFF;
+          font-size: 13px;
+          cursor: pointer;
+          white-space: nowrap;
+          transition: all 200ms ease;
+        }
+
+        .gudang-action-btn:hover {
+          background: rgba(255, 255, 255, 0.1);
+        }
+
+        .gudang-action-btn.active {
+          background: rgba(255, 107, 0, 0.15);
+          color: #FF6B00;
+          border-color: rgba(255, 107, 0, 0.3);
+        }
+
+        .gudang-action-btn.danger {
+          background: rgba(239, 68, 68, 0.15);
+          color: #EF4444;
+          border-color: rgba(239, 68, 68, 0.3);
+        }
+
+        .gudang-action-btn:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
         }
 
         /* Modal */
@@ -1090,6 +866,7 @@ n        .list-star {
           justify-content: center;
           z-index: 1000;
           animation: fadeIn 200ms ease;
+          padding: 16px;
         }
 
         .modal-content {
@@ -1097,220 +874,99 @@ n        .list-star {
           border: 1px solid rgba(255, 255, 255, 0.08);
           border-radius: 20px;
           padding: 24px;
-          width: 90%;
-n          max-width: 360px;
+          width: 100%;
+          max-width: 400px;
           animation: scaleIn 200ms ease;
         }
 
         .modal-content h3 {
           color: #FFFFFF;
           font-size: 18px;
-          margin: 0 0 16px 0;
+          margin: 0 0 8px 0;
         }
 
-        .modal-content input {
-          width: 100%;
-          padding: 12px 16px;
-          background: rgba(255, 255, 255, 0.05);
-          border: 1px solid rgba(255, 255, 255, 0.08);
-          border-radius: 12px;
-          color: #FFFFFF;
-          font-size: 14px;
-          outline: none;
+        .modal-content p {
+          color: #8B92A8;
+          font-size: 13px;
           margin-bottom: 16px;
         }
 
-        .modal-content input::placeholder {
-          color: #8B92A8;
-        }
-
-        .modal-actions {
-          display: flex;
-          gap: 8px;
-        }
-
-        .modal-actions button {
-          flex: 1;
-          padding: 12px;
-          border-radius: 12px;
-          font-size: 14px;
-          font-weight: 500;
+        .upload-area {
+          display: block;
           cursor: pointer;
+        }
+
+        .upload-dropzone {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 12px;
+          padding: 40px 24px;
+          background: rgba(255, 255, 255, 0.03);
+          border: 2px dashed rgba(255, 255, 255, 0.1);
+          border-radius: 16px;
+          color: #8B92A8;
           transition: all 200ms ease;
+        }
+
+        .upload-dropzone:hover {
+          border-color: rgba(255, 107, 0, 0.3);
+          background: rgba(255, 107, 0, 0.03);
+        }
+
+        .upload-dropzone.disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+
+        .upload-dropzone svg {
+          color: #FF6B00;
+        }
+
+        .upload-modal-progress {
+          margin-top: 16px;
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+
+        .upload-modal-bar {
+          flex: 1;
+          height: 6px;
+          background: rgba(255, 255, 255, 0.1);
+          border-radius: 3px;
+          overflow: hidden;
+        }
+
+        .upload-modal-fill {
+          height: 100%;
+          background: linear-gradient(90deg, #FF6B00, #FF8C00);
+          border-radius: 3px;
+          transition: width 300ms ease;
         }
 
         .modal-cancel {
-          background: rgba(255, 255, 255, 0.05);
-          border: 1px solid rgba(255, 255, 255, 0.08);
-          color: #8B92A8;
-        }
-
-        .modal-confirm {
-          background: linear-gradient(180deg, #FF6B00 0%, #FF8C00 100%);
-          border: none;
-          color: #FFFFFF;
-        }
-
-        /* Preview */
-        .preview-overlay {
-          position: fixed;
-          top: 0;
-          left: 0;
-          right: 0;
-          bottom: 0;
-          background: rgba(0, 0, 0, 0.9);
-          display: flex;
-          flex-direction: column;
-          z-index: 1000;
-          animation: fadeIn 200ms ease;
-        }
-
-        .preview-header {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: 16px;
-          border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-        }
-
-        .preview-title {
-          color: #FFFFFF;
-          font-size: 16px;
-          font-weight: 500;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-
-        .preview-close {
-          background: none;
-          border: none;
-          color: #8B92A8;
-          font-size: 20px;
-          cursor: pointer;
-          padding: 8px;
-        }
-
-        .preview-body {
-          flex: 1;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          overflow: auto;
-          padding: 16px;
-        }
-
-        .preview-image {
-          max-width: 100%;
-          max-height: 100%;
-          border-radius: 12px;
-        }
-
-        .preview-video {
-          max-width: 100%;
-          max-height: 100%;
-          border-radius: 12px;
-        }
-
-        .preview-audio {
           width: 100%;
-        }
-
-        .preview-pdf {
-          width: 100%;
-          height: 100%;
-          border: none;
-          border-radius: 12px;
-        }
-
-        .preview-text {
-          width: 100%;
-          max-height: 100%;
-          overflow: auto;
-          background: rgba(255, 255, 255, 0.03);
-          border-radius: 12px;
-          padding: 16px;
-        }
-
-        .preview-text pre {
-          color: #FFFFFF;
-          font-size: 13px;
-          line-height: 1.6;
-          margin: 0;
-          white-space: pre-wrap;
-          word-break: break-all;
-        }
-
-        .preview-actions {
-          display: flex;
-          gap: 8px;
-          padding: 16px;
-          border-top: 1px solid rgba(255, 255, 255, 0.08);
-        }
-
-        .preview-actions button {
-          flex: 1;
           padding: 12px;
+          margin-top: 16px;
           background: rgba(255, 255, 255, 0.05);
-          border: 1px solid rgba(255, 255, 255, 0.08);
+          border: none;
           border-radius: 12px;
-          color: #FFFFFF;
-          font-size: 13px;
+          color: #8B92A8;
+          font-size: 14px;
           cursor: pointer;
           transition: all 200ms ease;
         }
 
-        .preview-actions button:hover {
+        .modal-cancel:hover {
           background: rgba(255, 255, 255, 0.1);
         }
 
-        /* Context Menu */
-        .context-menu {
-          position: fixed;
-          background: #1C1C2E;
-          border: 1px solid rgba(255, 255, 255, 0.08);
-          border-radius: 12px;
-          padding: 8px 0;
-          min-width: 180px;
-          z-index: 1001;
-          box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-          animation: scaleIn 150ms ease;
+        .modal-cancel:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
         }
 
-        .context-menu button {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          width: 100%;
-          padding: 10px 16px;
-          background: none;
-          border: none;
-          color: #FFFFFF;
-          font-size: 14px;
-          cursor: pointer;
-          text-align: left;
-          transition: all 150ms ease;
-        }
-
-        .context-menu button:hover {
-          background: rgba(255, 255, 255, 0.05);
-        }
-
-        .context-menu .context-danger {
-          color: #EF4444;
-        }
-
-        .context-menu .context-danger:hover {
-          background: rgba(239, 68, 68, 0.1);
-        }
-
-        .context-divider {
-          height: 1px;
-          background: rgba(255, 255, 255, 0.08);
-          margin: 6px 0;
-        }
-
-        /* Animations */
         @keyframes fadeIn {
           from { opacity: 0; }
           to { opacity: 1; }
@@ -1321,7 +977,6 @@ n          max-width: 360px;
           to { opacity: 1; transform: scale(1); }
         }
 
-        /* Responsive */
         @media (min-width: 768px) {
           .gudang-page {
             max-width: 430px;
@@ -1330,15 +985,20 @@ n          max-width: 360px;
         }
 
         @media (max-width: 380px) {
-          .gudang-content.grid {
-            grid-template-columns: repeat(3, 1fr);
-            gap: 8px;
-            padding: 8px;
+          .gudang-files.grid {
+            grid-template-columns: 1fr;
           }
-n        }
+        }
       `}</style>
     </div>
   )
+}
+
+function formatSize(bytes) {
+  if (!bytes) return '0 B'
+  const sizes = ['B', 'KB', 'MB']
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), 2)
+  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${sizes[i]}`
 }
 
 export default Gudang
