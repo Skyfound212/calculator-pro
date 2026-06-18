@@ -1,6 +1,6 @@
 # CalculatorPro
 
-Kalkulator profesional dengan mode Basic dan Scientific. Desain modern, cepat, dan akurat untuk kebutuhan kalkulasi harian Anda.
+Kalkulator profesional dengan mode Basic dan Scientific. Desain modern, cepat, dan akurat untuk kebutuhan kalkulasi   harian Anda.
 
 ## Fitur
 
