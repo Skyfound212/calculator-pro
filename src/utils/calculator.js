@@ -2,6 +2,8 @@
 // CALCULATORPRO - CALCULATION ENGINE
 // ============================================
 
+import { STORAGE_KEYS } from './constants'
+
 /**
  * Evaluates a mathematical expression safely
  * Supports: +, -, *, /, %, ^, sqrt, parentheses
@@ -25,14 +27,21 @@ export function evaluateExpression(expression) {
     // Handle percentage: 50% → 50/100
     sanitized = sanitized.replace(/(\d+(\.\d+)?)%/g, '($1/100)')
     
-    // Validate: only allow safe characters
-    const validPattern = /^[0-9+\-*/().\s%^Math.sqrtPIE]+$/
+    // Validate: HANYA izinkan angka, operator, parentheses, dan Math.sqrt
+    // Bug fix: pattern lama terlalu lemah (M, a, t, h diizinkan terpisah)
+    const validPattern = /^(?:\d+\.?\d*|\.\d+|[+\-*/()%^]|\*\*|Math\.sqrt|Math\.PI|Math\.E|\s)+$/
     if (!validPattern.test(sanitized)) {
       return null
     }
     
-    // Use Function constructor (safer than eval)
-    const result = new Function(`return (${sanitized})`)()
+    // Extra validation: cek tidak ada kata/karakter berbahaya
+    const dangerous = /(?:eval|function|constructor|prototype|window|document|alert|fetch|import|require|process|global|localStorage|sessionStorage|indexedDB|XMLHttpRequest|WebSocket|setTimeout|setInterval|clearTimeout|clearInterval|atob|btoa|Function|Object|Array|String|Number|Boolean|Date|RegExp|Error|Promise|Map|Set|WeakMap|WeakSet|Symbol|BigInt|Proxy|Reflect|JSON|Math|console|this|self|top|parent|frames|location|navigator|history|screen|document|window)/gi
+    if (dangerous.test(sanitized)) {
+      return null
+    }
+    
+    // Bug fix: Ganti Function constructor dengan parser matematika aman
+    const result = safeMathEval(sanitized)
     
     // Check for invalid results
     if (!isFinite(result) || isNaN(result)) {
@@ -43,6 +52,140 @@ export function evaluateExpression(expression) {
   } catch (error) {
     return null
   }
+}
+
+/**
+ * Safe math evaluator using shunting-yard algorithm
+ * Tidak pakai eval() atau Function constructor
+ */
+function safeMathEval(expression) {
+  // Tokenize
+  const tokens = expression.match(/\d+\.?\d*|\.\d+|[+\-*/()%^]|\*\*|Math\.sqrt|Math\.PI|Math\.E/g) || []
+  
+  const output = []
+  const operators = []
+  
+  const precedence = {
+    '+': 1,
+    '-': 1,
+    '*': 2,
+    '/': 2,
+    '%': 2,
+    '^': 3,
+    '**': 3
+  }
+  
+  const isRightAssociative = { '^': true, '**': true }
+  
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i]
+    
+    // Number
+    if (/^\d+\.?\d*$|^\.\d+$/.test(token)) {
+      output.push(parseFloat(token))
+      continue
+    }
+    
+    // Math constants
+    if (token === 'Math.PI') {
+      output.push(Math.PI)
+      continue
+    }
+    if (token === 'Math.E') {
+      output.push(Math.E)
+      continue
+    }
+    
+    // Math.sqrt function
+    if (token === 'Math.sqrt') {
+      // Cek apakah diikuti oleh angka atau kurung
+      if (tokens[i + 1] === '(') {
+        // Find matching closing parenthesis
+        let depth = 1
+        let j = i + 2
+        const subExpr = []
+        while (j < tokens.length && depth > 0) {
+          if (tokens[j] === '(') depth++
+          else if (tokens[j] === ')') depth--
+          if (depth > 0) subExpr.push(tokens[j])
+          j++
+        }
+        if (subExpr.length > 0) {
+          const subResult = safeMathEval(subExpr.join(' '))
+          output.push(Math.sqrt(subResult))
+          i = j - 1
+        }
+      } else if (tokens[i + 1] && /^\d+\.?\d*$/.test(tokens[i + 1])) {
+        output.push(Math.sqrt(parseFloat(tokens[i + 1])))
+        i++
+      }
+      continue
+    }
+    
+    // Operator
+    if (precedence[token]) {
+      while (
+        operators.length > 0 &&
+        operators[operators.length - 1] !== '(' &&
+        (
+          precedence[operators[operators.length - 1]] > precedence[token] ||
+          (
+            precedence[operators[operators.length - 1]] === precedence[token] &&
+            !isRightAssociative[token]
+          )
+        )
+      ) {
+        output.push(operators.pop())
+      }
+      operators.push(token)
+      continue
+    }
+    
+    // Left parenthesis
+    if (token === '(') {
+      operators.push(token)
+      continue
+    }
+    
+    // Right parenthesis
+    if (token === ')') {
+      while (operators.length > 0 && operators[operators.length - 1] !== '(') {
+        output.push(operators.pop())
+      }
+      operators.pop() // Remove '('
+      continue
+    }
+  }
+  
+  // Pop remaining operators
+  while (operators.length > 0) {
+    output.push(operators.pop())
+  }
+  
+  // Evaluate RPN
+  const stack = []
+  for (const token of output) {
+    if (typeof token === 'number') {
+      stack.push(token)
+      continue
+    }
+    
+    const b = stack.pop()
+    const a = stack.pop()
+    
+    switch (token) {
+      case '+': stack.push(a + b); break
+      case '-': stack.push(a - b); break
+      case '*': stack.push(a * b); break
+      case '/': stack.push(b !== 0 ? a / b : 0); break
+      case '%': stack.push(a % b); break
+      case '^':
+      case '**': stack.push(Math.pow(a, b)); break
+      default: stack.push(0)
+    }
+  }
+  
+  return stack.length > 0 ? stack[0] : 0
 }
 
 /**
@@ -87,7 +230,7 @@ export function addSeparators(input) {
   
   // Split by decimal point
   const parts = input.split('.')
-  const integerPart = parts[0].replace(/\\B(?=(\\d{3})+(?!\\d))/g, '.')
+  const integerPart = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, '.')
   const decimalPart = parts[1] ? ',' + parts[1] : ''
   
   return integerPart + decimalPart
@@ -108,6 +251,8 @@ export const scientificFunctions = {
   sqrt: (x) => roundResult(Math.sqrt(x)),
   cbrt: (x) => roundResult(Math.cbrt(x)),
   pow: (x, y) => roundResult(Math.pow(x, y)),
+  pow10: (x) => roundResult(Math.pow(10, x)),
+  exp: (x) => roundResult(Math.exp(x)),
   factorial: (n) => {
     if (n < 0) return null
     if (n === 0 || n === 1) return 1
@@ -127,19 +272,20 @@ export const scientificFunctions = {
 
 /**
  * Memory operations
+ * Bug fix: Ganti hardcode key pakai STORAGE_KEYS
  */
 export const memoryOperations = {
   get: () => {
-    const stored = localStorage.getItem('calculatorpro_memory')
+    const stored = localStorage.getItem(STORAGE_KEYS.CALC_MEMORY)
     return stored ? parseFloat(stored) : 0
   },
   
   set: (value) => {
-    localStorage.setItem('calculatorpro_memory', value.toString())
+    localStorage.setItem(STORAGE_KEYS.CALC_MEMORY, value.toString())
   },
   
   clear: () => {
-    localStorage.removeItem('calculatorpro_memory')
+    localStorage.removeItem(STORAGE_KEYS.CALC_MEMORY)
   },
   
   add: (value) => {
@@ -155,11 +301,12 @@ export const memoryOperations = {
 
 /**
  * History management
+ * Bug fix: Ganti hardcode key pakai STORAGE_KEYS
  */
 export const historyManager = {
   get: () => {
     try {
-      const stored = localStorage.getItem('calculatorpro_history')
+      const stored = localStorage.getItem(STORAGE_KEYS.CALC_HISTORY)
       return stored ? JSON.parse(stored) : []
     } catch {
       return []
@@ -177,11 +324,11 @@ export const historyManager = {
     history.unshift(entry)
     // Keep only last 50
     if (history.length > 50) history.pop()
-    localStorage.setItem('calculatorpro_history', JSON.stringify(history))
+    localStorage.setItem(STORAGE_KEYS.CALC_HISTORY, JSON.stringify(history))
   },
   
   clear: () => {
-    localStorage.removeItem('calculatorpro_history')
+    localStorage.removeItem(STORAGE_KEYS.CALC_HISTORY)
   }
 }
 
