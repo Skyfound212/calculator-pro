@@ -10,16 +10,27 @@ if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js')
       .then((registration) => {
         console.log('SW registered:', registration.scope)
-        
+
         // Check for updates
         registration.addEventListener('updatefound', () => {
+          // Bug 8 fix: Cek newWorker tidak null sebelum addEventListener
           const newWorker = registration.installing
-          newWorker.addEventListener('statechange', () => {
-            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-              // New version available, notify user (optional)
-              console.log('New version available')
-            }
-          })
+          
+          if (newWorker) {
+            newWorker.addEventListener('statechange', () => {
+              if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                // New version available, notify user (optional)
+                console.log('New version available')
+                
+                // Optional: Show update notification to user
+                if (window.confirm('Versi baru CalculatorPro tersedia. Muat ulang sekarang?')) {
+                  window.location.reload()
+                }
+              }
+            })
+          } else {
+            console.warn('[SW] updatefound event fired but installing worker is null')
+          }
         })
       })
       .catch((error) => {
