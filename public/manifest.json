@@ -3,7 +3,7 @@
   "short_name": "CalcPro",
   "description": "Kalkulator profesional dengan mode Basic dan Scientific. Desain modern, cepat, dan akurat untuk kebutuhan kalkulasi harian Anda.",
   "start_url": "/",
-  "display": "standalone",
+  "display": "fullscreen",
   "background_color": "#0D0D0D",
   "theme_color": "#0D0D0D",
   "orientation": "portrait",
