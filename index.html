@@ -2,12 +2,17 @@
 <html lang="id">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#0D0D0D" />
   <meta name="description" content="Kalkulator profesional dengan mode Basic dan Scientific. Desain modern, cepat, dan akurat." />
+  
+  <!-- iOS PWA -->
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="CalculatorPro" />
+  
+  <!-- Android PWA -->
+  <meta name="mobile-web-app-capable" content="yes" />
   
   <link rel="icon" type="image/png" href="/icons/icon-192.png" />
   <link rel="apple-touch-icon" href="/icons/icon-192.png" />
@@ -29,7 +34,14 @@
       overflow: hidden;
     }
     
+    html {
+      height: -webkit-fill-available;
+    }
+    
     body {
+      min-height: 100vh;
+      min-height: 100dvh;
+      min-height: -webkit-fill-available;
       background: #0D0D0D;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       -webkit-font-smoothing: antialiased;
@@ -39,6 +51,9 @@
     #root {
       display: flex;
       flex-direction: column;
+      height: 100vh;
+      height: 100dvh;
+      height: -webkit-fill-available;
     }
   </style>
 </head>
