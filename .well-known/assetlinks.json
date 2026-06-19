@@ -1,8 +1,14 @@
-[{
-  "relation": ["delegate_permission/common.handle_all_urls"],
-  "target": {
-    "namespace": "android_app",
-    "package_name": "dev.pages.calculator_pro_48o.twa",
-    "sha256_cert_fingerprints": ["AD:78:F9:1C:92:9F:D7:68:92:D1:AB:83:50:5A:97:77:D2:B9:4B:6D:6E:76:5C:F9:BB:62:F4:F1:86:C1:6A:95"]
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "dev.pages.calculator_pro_48o.twa",
+      "sha256_cert_fingerprints": [
+        "CF:73:5D:11:B8:DC:AC:A2:D0:D7:2B:6A:EB:DE:C5:69:54:26:2C:EA:8D:3A:FB:6E:DF:B0:7F:E7:3F:DA:0B:23"
+      ]
+    }
   }
-}]
+]
