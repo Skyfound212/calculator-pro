@@ -1,25 +1,38 @@
+function corsHeaders() {
+  return {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type'
+  }
+}
+
 const DEFAULT_FOLDERS = [{ id: 'root', name: 'Semua File', parentId: null }]
+
+export async function onRequestOptions() {
+  return new Response(null, { status: 204, headers: corsHeaders() })
+}
 
 export async function onRequestGet({ env }) {
   try {
     const obj = await env.GUDANG_BUCKET.get('_folders.json')
-    if (!obj) return Response.json(DEFAULT_FOLDERS)
-    return Response.json(await obj.json())
+    if (!obj) return Response.json(DEFAULT_FOLDERS, { headers: corsHeaders() })
+    return Response.json(await obj.json(), { headers: corsHeaders() })
   } catch (err) {
-    return Response.json({ error: err.message }, { status: 500 })
+    return Response.json({ error: err.message }, { status: 500, headers: corsHeaders() })
   }
 }
 
 export async function onRequestPost({ env, request }) {
   try {
-    const { name } = await request.json()
+    const body = await request.json()
+    const name = body.name || 'Folder Baru'
 
     const obj = await env.GUDANG_BUCKET.get('_folders.json')
     const folders = obj ? await obj.json() : [...DEFAULT_FOLDERS]
 
     const newFolder = {
       id: crypto.randomUUID(),
-      name: name || 'Folder Baru',
+      name,
       parentId: null,
       createdAt: new Date().toISOString()
     }
@@ -30,8 +43,8 @@ export async function onRequestPost({ env, request }) {
       httpMetadata: { contentType: 'application/json' }
     })
 
-    return Response.json(newFolder, { status: 201 })
+    return Response.json(newFolder, { status: 201, headers: corsHeaders() })
   } catch (err) {
-    return Response.json({ error: err.message }, { status: 500 })
+    return Response.json({ error: err.message }, { status: 500, headers: corsHeaders() })
   }
 }
