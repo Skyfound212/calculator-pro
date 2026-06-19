@@ -78,21 +78,24 @@ export default function Gudang() {
 
   const fileInputRef = useRef()
   const folderPressTimer = useRef()
+  const scrollRef = useRef()
+  const pullStartY = useRef(0)
+  const [refreshing, setRefreshing] = useState(false)
+  const [pullY, setPullY] = useState(0)
 
   // Load data
-  useEffect(() => {
-    const load = async () => {
-      setLoading(true)
-      setError(null)
-      try {
-        const [fr, folr] = await Promise.all([fetch(`${API}/files`), fetch(`${API}/folders`)])
-        if (fr.ok) setFiles(await fr.json())
-        if (folr.ok) setFolders(await folr.json())
-      } catch { setError('Gagal memuat data. Cek koneksi internet.') }
-      finally { setLoading(false) }
-    }
-    load()
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const [fr, folr] = await Promise.all([fetch(`${API}/files`), fetch(`${API}/folders`)])
+      if (fr.ok) setFiles(await fr.json())
+      if (folr.ok) setFolders(await folr.json())
+    } catch { setError('Gagal memuat data. Cek koneksi internet.') }
+    finally { setLoading(false) }
   }, [])
+
+  useEffect(() => { load() }, [load])
 
   // Filtered + sorted files
   const visibleFiles = files
@@ -303,7 +306,33 @@ export default function Gudang() {
       )}
 
       {/* ── File area ── */}
-      <div className="gd-scroll" onClick={() => { setShowSortMenu(false) }}>
+      <div
+        className="gd-scroll"
+        ref={scrollRef}
+        onClick={() => { setShowSortMenu(false) }}
+        onTouchStart={e => {
+          if (scrollRef.current?.scrollTop === 0) pullStartY.current = e.touches[0].clientY
+          else pullStartY.current = 0
+        }}
+        onTouchMove={e => {
+          if (!pullStartY.current) return
+          const dy = e.touches[0].clientY - pullStartY.current
+          if (dy > 0 && dy < 90) setPullY(dy)
+        }}
+        onTouchEnd={() => {
+          if (pullY > 55) {
+            setRefreshing(true)
+            load().finally(() => { setRefreshing(false) })
+          }
+          setPullY(0)
+          pullStartY.current = 0
+        }}
+      >
+        {(pullY > 0 || refreshing) && (
+          <div className="gd-ptr" style={{height: refreshing ? 52 : Math.max(pullY * 0.65, 0)}}>
+            <div className={`gd-ptr-icon ${refreshing ? 'spinning' : ''}`} style={{opacity: refreshing ? 1 : Math.min(pullY / 55, 1), transform: `rotate(${pullY * 3}deg)`}}>↻</div>
+          </div>
+        )}
         {loading && <div className="gd-empty"><span className="gd-spinner">⏳</span> Memuat...</div>}
 
         {!loading && visibleFiles.length === 0 && (
@@ -1024,6 +1053,53 @@ function Styles() {
 
       .gd-spinner { animation: spin 1s linear infinite; display: inline-block; }
       @keyframes spin { to { transform: rotate(360deg); } }
+
+      /* ── Pull to Refresh ── */
+      .gd-ptr {
+        display: flex; align-items: flex-end; justify-content: center;
+        overflow: hidden; transition: height 200ms ease;
+        padding-bottom: 6px; flex-shrink: 0;
+      }
+      .gd-ptr-icon {
+        font-size: 22px; color: #FF6B00; line-height: 1;
+        transition: opacity 200ms;
+      }
+      .gd-ptr-icon.spinning { animation: spin 0.7s linear infinite; }
+
+      /* ── Mobile-first native feel ── */
+      .gd-root { -webkit-tap-highlight-color: transparent; }
+      .gd-header { padding: 12px 16px; min-height: 56px; }
+      .gd-header-title { font-size: 17px; font-weight: 700; letter-spacing: -0.3px; }
+      .gd-icon-btn { width: 38px; height: 38px; border-radius: 10px; font-size: 17px; }
+      .gd-icon-btn:active { background: rgba(255,255,255,0.12); }
+      .gd-search-row { padding: 10px 16px 0; }
+      .gd-search-wrap { border-radius: 14px; padding: 0 14px; }
+      .gd-search { font-size: 15px; padding: 11px 0; }
+      .gd-folders { padding: 10px 16px 0; gap: 8px; }
+      .gd-chip { padding: 7px 16px; border-radius: 22px; font-size: 14px; font-weight: 500; }
+      .gd-chip:active { opacity: 0.7; transform: scale(0.95); }
+      .gd-scroll { padding: 12px 16px; }
+      .gd-grid { grid-template-columns: repeat(3, 1fr); gap: 10px; }
+      @media (max-width: 360px) { .gd-grid { grid-template-columns: repeat(2, 1fr); } }
+      .gd-card { border-radius: 14px; }
+      .gd-card:active { opacity: 0.8; transform: scale(0.97); transition: transform 100ms, opacity 100ms; }
+      .gd-row { padding: 12px 10px; border-radius: 12px; min-height: 60px; }
+      .gd-row:active { background: rgba(255,255,255,0.07); }
+      .gd-row-name { font-size: 14px; font-weight: 500; }
+      .gd-row-meta { font-size: 12px; margin-top: 3px; }
+      .gd-bottom { padding: 12px 16px 20px; gap: 10px; }
+      .gd-fab { width: 48px; height: 48px; font-size: 24px; box-shadow: 0 6px 20px rgba(255,107,0,0.45); }
+      .gd-fab:active { transform: scale(0.93); }
+      .gd-bottom-btn { padding: 10px 18px; border-radius: 12px; font-size: 14px; font-weight: 500; }
+      .gd-bottom-btn:active { opacity: 0.75; }
+      .gd-sheet { border-radius: 24px 24px 0 0; padding-bottom: env(safe-area-inset-bottom, 8px); }
+      .gd-sheet-btn { padding: 18px 8px; }
+      .gd-sheet-btn:active { background: rgba(255,255,255,0.08); }
+      .gd-sheet-btn-icon { font-size: 24px; }
+      .modal-box { border-radius: 24px; }
+      .gd-btn { padding: 14px; border-radius: 14px; font-size: 15px; }
+      .gd-btn:active { opacity: 0.8; }
+      .gd-input { padding: 14px; border-radius: 12px; font-size: 16px; }
     `}</style>
   )
 }
