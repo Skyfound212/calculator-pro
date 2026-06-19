@@ -508,52 +508,31 @@ function RuangKerja() {
     if (!content.trim()) return
 
     const format = formats.find(f => f.id === selectedFormat)
-    const contentBlob = new Blob([content])
-    
-    if (contentBlob.size > 2 * 1024 * 1024) {
+    const mimeType = format?.category === 'deployment' ? `text/${selectedFormat}` : `text/${selectedFormat}`
+    const blob = new Blob([content], { type: mimeType })
+
+    if (blob.size > 2 * 1024 * 1024) {
       alert('❌ File terlalu besar (maksimal 2MB)')
       return
     }
 
-    const newFile = {
-      id: `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      name: fileName,
-      originalName: fileName,
-      type: format ? `${format.category === 'deployment' ? 'text' : 'application'}/${selectedFormat}` : 'text/plain',
-      size: contentBlob.size,
-      content: `data:text/plain;base64,${btoa(unescape(encodeURIComponent(content)))}`,
-      folderId: selectedFolderId,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      isStarred: false,
-      isTrashed: false
-    }
+    const fd = new FormData()
+    fd.append('file', new File([blob], fileName, { type: mimeType }))
+    fd.append('folderId', selectedFolderId)
 
     try {
-      const db = await openDB()
-      const tx = db.transaction(['files'], 'readwrite')
-      const filesStore = tx.objectStore('files')
-      
-      const existingFiles = await idbRequest(filesStore.getAll())
-      
-      const totalSize = existingFiles.reduce((sum, f) => sum + (f.size || 0), 0) + newFile.size
-      if (totalSize > 10 * 1024 * 1024) {
-        alert('❌ Total storage melebihi 10MB. Hapus file lama di Gudang terlebih dahulu.')
-        db.close()
-        return
+      const res = await fetch('/api/files', { method: 'POST', body: fd })
+      if (res.ok) {
+        setShowSendModal(false)
+        alert(`✅ "${fileName}" berhasil dikirim ke Gudang!`)
+      } else {
+        const err = await res.json().catch(() => ({}))
+        alert(`❌ Gagal: ${err.error || 'Terjadi kesalahan'}`)
       }
-      
-      await idbRequest(filesStore.put(newFile))
-      await transactionComplete(tx)
-      db.close()
-      
-      setShowSendModal(false)
-      alert(`✅ "${fileName}" berhasil dikirim ke Gudang!`)
     } catch (err) {
-      console.error('Failed to send to Gudang:', err)
       alert('❌ Gagal mengirim ke Gudang. Coba lagi.')
     }
-  }, [content, fileName, selectedFormat])
+  }, [content, fileName, selectedFormat, selectedFolderId])
 
   const getPreview = () => {
     if (!content.trim()) return <div className="preview-empty">Preview akan muncul di sini...</div>
