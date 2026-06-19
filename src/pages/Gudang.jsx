@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 const API = '/api'
@@ -82,6 +82,8 @@ export default function Gudang() {
   const fileInputRef = useRef()
   const folderPressTimer = useRef()
   const scrollRef = useRef()
+  const chipsRef = useRef()
+  const chipsScrollRef = useRef(0)
   const pullStartY = useRef(0)
   const [refreshing, setRefreshing] = useState(false)
   const [pullY, setPullY] = useState(0)
@@ -99,6 +101,10 @@ export default function Gudang() {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  useLayoutEffect(() => {
+    if (chipsRef.current) chipsRef.current.scrollLeft = chipsScrollRef.current
+  })
 
   // Filtered + sorted files
   const visibleFiles = files
@@ -287,7 +293,7 @@ export default function Gudang() {
 
       {/* ── Folder chips ── */}
       {!showTrash && (
-        <div className="gd-folders">
+        <div className="gd-folders" ref={chipsRef} onScroll={e => { chipsScrollRef.current = e.currentTarget.scrollLeft }}>
           {folders.map(f => (
             <button 
               key={f.id} 
