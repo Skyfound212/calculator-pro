@@ -1,3 +1,15 @@
+function corsHeaders() {
+  return {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type'
+  }
+}
+
+export async function onRequestOptions() {
+  return new Response(null, { status: 204, headers: corsHeaders() })
+}
+
 export async function onRequestGet({ env }) {
   try {
     const list = await env.GUDANG_BUCKET.list({ prefix: 'meta/' })
@@ -10,9 +22,9 @@ export async function onRequestGet({ env }) {
       })
     )
 
-    return Response.json(files.filter(Boolean))
+    return Response.json(files.filter(Boolean), { headers: corsHeaders() })
   } catch (err) {
-    return Response.json({ error: err.message }, { status: 500 })
+    return Response.json({ error: err.message }, { status: 500, headers: corsHeaders() })
   }
 }
 
@@ -22,21 +34,27 @@ export async function onRequestPost({ env, request }) {
     const file = formData.get('file')
     const folderId = formData.get('folderId') || 'root'
 
-    if (!file) {
-      return Response.json({ error: 'No file provided' }, { status: 400 })
+    if (!file || typeof file === 'string') {
+      return Response.json({ error: 'No file provided' }, { status: 400, headers: corsHeaders() })
     }
 
     const id = crypto.randomUUID()
 
-    await env.GUDANG_BUCKET.put(`files/${id}`, file.stream(), {
-      httpMetadata: { contentType: file.type || 'application/octet-stream' }
+    // Use arrayBuffer — more reliable than stream() in Workers
+    const buffer = await file.arrayBuffer()
+    const size = buffer.byteLength
+
+    await env.GUDANG_BUCKET.put(`files/${id}`, buffer, {
+      httpMetadata: {
+        contentType: file.type || 'application/octet-stream'
+      }
     })
 
     const metadata = {
       id,
       name: file.name,
       type: file.type || 'application/octet-stream',
-      size: file.size,
+      size,
       folderId,
       isStarred: false,
       isTrashed: false,
@@ -47,8 +65,8 @@ export async function onRequestPost({ env, request }) {
       httpMetadata: { contentType: 'application/json' }
     })
 
-    return Response.json(metadata, { status: 201 })
+    return Response.json(metadata, { status: 201, headers: corsHeaders() })
   } catch (err) {
-    return Response.json({ error: err.message }, { status: 500 })
+    return Response.json({ error: err.message }, { status: 500, headers: corsHeaders() })
   }
 }
