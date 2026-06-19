@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Folder, Star, Trash2, Upload, FileText, Image, Code, File } from 'lucide-react'
+
 import { STORAGE_KEYS } from '../utils/constants'
 
 // IDB Helper - wrap native IndexedDB dalam Promise
@@ -275,10 +275,10 @@ function Gudang() {
 
   // Get file icon
   const getFileIcon = (type) => {
-    if (type.startsWith('image/')) return <Image size={20} />
-    if (type.startsWith('text/')) return <FileText size={20} />
-    if (type.includes('json') || type.includes('javascript')) return <Code size={20} />
-    return <File size={20} />
+    if (type.startsWith('image/')) return '🖼️'
+    if (type.startsWith('text/')) return '📄'
+    if (type.includes('json') || type.includes('javascript')) return '💻'
+    return '📎'
   }
 
   // Filter files
@@ -298,7 +298,7 @@ function Gudang() {
       <div className="gudang-header">
         <div className="gudang-header-left">
           <button className="gudang-back" onClick={() => navigate('/skyroom')}>
-            <ArrowLeft size={20} />
+            ⬅
           </button>
           <h1 className="gudang-title">📦 Gudang</h1>
         </div>
@@ -337,7 +337,7 @@ function Gudang() {
             className={`gudang-folder ${currentFolder === folder.id ? 'active' : ''}`}
             onClick={() => setCurrentFolder(folder.id)}
           >
-            <Folder size={16} />
+            📁
             <span>{folder.name}</span>
           </button>
         ))}
@@ -381,7 +381,7 @@ function Gudang() {
                   <span className="file-meta">{formatSize(file.size)}</span>
                 </div>
                 <button className="file-star active" onClick={() => toggleStar(file.id)}>
-                  <Star size={16} fill="#FF6B00" />
+                  ⭐
                 </button>
               </div>
             ))}
@@ -424,7 +424,7 @@ function Gudang() {
                     className={`file-star ${file.isStarred ? 'active' : ''}`}
                     onClick={(e) => { e.stopPropagation(); toggleStar(file.id) }}
                   >
-                    <Star size={16} fill={file.isStarred ? '#FF6B00' : 'none'} />
+                    {file.isStarred ? '⭐' : '☆'}
                   </button>
                 )}
                 
@@ -440,7 +440,7 @@ function Gudang() {
                     className="file-delete"
                     onClick={(e) => { e.stopPropagation(); deleteFile(file.id) }}
                   >
-                    <Trash2 size={16} />
+                    🗑️
                   </button>
                 )}
               </div>
@@ -456,7 +456,7 @@ function Gudang() {
           onClick={() => setShowUpload(true)}
           disabled={uploading}
         >
-          <Upload size={18} />
+          📤
           <span>Upload</span>
         </button>
         
@@ -464,7 +464,7 @@ function Gudang() {
           className={`gudang-action-btn ${showTrash ? 'active' : ''}`}
           onClick={() => setShowTrash(!showTrash)}
         >
-          <Trash2 size={18} />
+          🗑️
           <span>{showTrash ? 'File' : 'Sampah'}</span>
         </button>
         
@@ -476,7 +476,7 @@ function Gudang() {
               setSelectedFiles([])
             }}
           >
-            <Trash2 size={18} />
+            🗑️
             <span>Hapus ({selectedFiles.length})</span>
           </button>
         )}
@@ -498,7 +498,7 @@ function Gudang() {
                 style={{ display: 'none' }}
               />
               <div className={`upload-dropzone ${uploading ? 'disabled' : ''}`}>
-                <Upload size={32} />
+                <span style={{ fontSize: '32px' }}>📤</span>
                 <span>{uploading ? 'Mengupload...' : 'Tap untuk pilih file'}</span>
               </div>
             </label>
