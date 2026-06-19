@@ -254,8 +254,7 @@ self.addEventListener('fetch', (event) => {
 self.addEventListener('sync', (event) => {
   if (event.tag === 'sync-calculator-data') {
     event.waitUntil(
-      // Sync data yang tertunda
-      console.log('[SW] Background sync triggered')
+      Promise.resolve(console.log('[SW] Background sync triggered'))
     );
   }
 });
