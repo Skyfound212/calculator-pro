@@ -60,22 +60,6 @@
       "purpose": "any maskable"
     }
   ],
-  "screenshots": [
-    {
-      "src": "/icons/screenshot-1.png",
-      "sizes": "390x844",
-      "type": "image/png",
-      "form_factor": "narrow",
-      "label": "Mode Basic Kalkulator"
-    },
-    {
-      "src": "/icons/screenshot-2.png",
-      "sizes": "390x844",
-      "type": "image/png",
-      "form_factor": "narrow",
-      "label": "Mode Scientific Kalkulator"
-    }
-  ],
   "shortcuts": [
     {
       "name": "Mode Basic",
