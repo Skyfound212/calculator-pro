@@ -1,53 +1,17 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 
-import { STORAGE_KEYS } from '../utils/constants'
-
-// IDB Helper - wrap native IndexedDB dalam Promise
-const openDB = () => {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open('CalculatorProDB', 1)
-    request.onerror = () => reject(request.error)
-    request.onsuccess = () => resolve(request.result)
-    request.onupgradeneeded = (event) => {
-      const db = event.target.result
-      if (!db.objectStoreNames.contains('files')) {
-        db.createObjectStore('files', { keyPath: 'id' })
-      }
-      if (!db.objectStoreNames.contains('folders')) {
-        db.createObjectStore('folders', { keyPath: 'id' })
-      }
-    }
-  })
-}
-
-// Wrap IDB transaction dalam Promise
-const transactionComplete = (tx) => {
-  return new Promise((resolve, reject) => {
-    tx.oncomplete = () => resolve()
-    tx.onerror = () => reject(tx.error)
-    tx.onabort = () => reject(new Error('Transaction aborted'))
-  })
-}
-
-// Wrap IDB request dalam Promise
-const idbRequest = (request) => {
-  return new Promise((resolve, reject) => {
-    request.onsuccess = () => resolve(request.result)
-    request.onerror = () => reject(request.error)
-  })
-}
+const API = '/api'
 
 function Gudang() {
   const navigate = useNavigate()
-  
+
   const [files, setFiles] = useState([])
   const [folders, setFolders] = useState([
     { id: 'root', name: 'Semua File', parentId: null }
   ])
-  const [trash, setTrash] = useState([])
   const [currentFolder, setCurrentFolder] = useState('root')
-  const [viewMode, setViewMode] = useState('grid') // grid | list
+  const [viewMode, setViewMode] = useState('grid')
   const [selectedFiles, setSelectedFiles] = useState([])
   const [showUpload, setShowUpload] = useState(false)
   const [showTrash, setShowTrash] = useState(false)
@@ -55,223 +19,138 @@ function Gudang() {
   const [uploading, setUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
   const [uploadError, setUploadError] = useState(null)
+  const [loading, setLoading] = useState(true)
 
-  // Load data from IndexedDB on mount
+  // Load data from R2 via Pages Functions
   useEffect(() => {
     const loadData = async () => {
+      setLoading(true)
       try {
-        const db = await openDB()
-        const tx = db.transaction(['files', 'folders'], 'readonly')
-        
-        const filesStore = tx.objectStore('files')
-        const foldersStore = tx.objectStore('folders')
-        
-        const allFiles = await idbRequest(filesStore.getAll())
-        const allFolders = await idbRequest(foldersStore.getAll())
-        
-        await transactionComplete(tx)
-        db.close()
-        
-        setFiles(allFiles || [])
-        if (allFolders && allFolders.length > 0) {
-          setFolders(allFolders)
-        }
+        const [filesRes, foldersRes] = await Promise.all([
+          fetch(`${API}/files`),
+          fetch(`${API}/folders`)
+        ])
+        if (filesRes.ok) setFiles(await filesRes.json())
+        if (foldersRes.ok) setFolders(await foldersRes.json())
       } catch (err) {
-        console.error('Failed to load from IndexedDB:', err)
-        // Fallback to localStorage
-        try {
-          const stored = localStorage.getItem(STORAGE_KEYS.GUDANG_DATA)
-          if (stored) {
-            const data = JSON.parse(stored)
-            setFiles(data.files || [])
-            setFolders(data.folders || [{ id: 'root', name: 'Semua File', parentId: null }])
-            setTrash(data.trash || [])
-          }
-        } catch (e) {
-          console.error('Fallback load failed:', e)
-        }
+        setUploadError('Gagal memuat data. Cek koneksi internet.')
+      } finally {
+        setLoading(false)
       }
     }
-    
     loadData()
   }, [])
 
-  // Save data to IndexedDB - menerima data sebagai parameter (Bug 3 fix)
-  const saveData = useCallback(async (dataToSave) => {
-    const data = dataToSave || { files, folders, trash }
-    
-    try {
-      const db = await openDB()
-      const tx = db.transaction(['files', 'folders'], 'readwrite')
-      
-      const filesStore = tx.objectStore('files')
-      const foldersStore = tx.objectStore('folders')
-      
-      // Clear dan rewrite semua data (Bug 2 fix - wrap dalam Promise)
-      await idbRequest(filesStore.clear())
-      await idbRequest(foldersStore.clear())
-      
-      // Wrap tiap .put() dalam Promise
-      const putPromises = [
-        ...data.files.map(f => idbRequest(filesStore.put(f))),
-        ...data.folders.map(f => idbRequest(foldersStore.put(f)))
-      ]
-      
-      await Promise.all(putPromises)
-      await transactionComplete(tx) // Bug 1 fix - tx.done ganti jadi Promise wrapper
-      db.close()
-    } catch (err) {
-      console.error('Failed to save to IndexedDB:', err)
-      // Fallback to localStorage
-      try {
-        localStorage.setItem(STORAGE_KEYS.GUDANG_DATA, JSON.stringify(data))
-      } catch (e) {
-        console.error('Fallback save failed:', e)
-        setUploadError('Storage penuh! Hapus file lama.')
-      }
-    }
-  }, [files, folders, trash])
-
-  // Upload file handler dengan progress (Bug 4 fix)
+  // Upload file to R2
   const handleFileUpload = useCallback(async (event) => {
-    const uploadedFiles = event.target.files
-    if (!uploadedFiles || uploadedFiles.length === 0) return
-    
+    const uploadedFiles = Array.from(event.target.files || [])
+    if (!uploadedFiles.length) return
+
     setUploading(true)
     setUploadProgress(0)
     setUploadError(null)
-    
-    const newFiles = []
-    const totalFiles = uploadedFiles.length
-    
+
     for (let i = 0; i < uploadedFiles.length; i++) {
       const file = uploadedFiles[i]
-      
-      // Cek ukuran file (max 5MB)
-      if (file.size > 5 * 1024 * 1024) {
-        setUploadError(`File "${file.name}" terlalu besar (maksimal 5MB)`)
-        continue
-      }
-      
-      // Cek total storage
-      const totalSize = files.reduce((sum, f) => sum + (f.size || 0), 0) + file.size
-      if (totalSize > 10 * 1024 * 1024) { // 10MB total limit
-        setUploadError('Total storage melebihi 10MB. Hapus file lama terlebih dahulu.')
-        break
-      }
-      
+
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('folderId', currentFolder)
+
       try {
-        const content = await new Promise((resolve, reject) => {
-          const reader = new FileReader()
-          reader.onload = (e) => resolve(e.target.result)
-          reader.onerror = (e) => reject(reader.error)
-          reader.readAsDataURL(file)
-        })
-        
-        const newFile = {
-          id: `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          name: file.name,
-          originalName: file.name,
-          type: file.type || 'application/octet-stream',
-          size: file.size,
-          content: content,
-          folderId: currentFolder,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-          isStarred: false,
-          isTrashed: false
+        const res = await fetch(`${API}/files`, { method: 'POST', body: formData })
+        if (res.ok) {
+          const newFile = await res.json()
+          setFiles(prev => [...prev, newFile])
+        } else {
+          const err = await res.json().catch(() => ({}))
+          setUploadError(err.error || `Gagal upload "${file.name}"`)
         }
-        
-        newFiles.push(newFile)
-        setUploadProgress(Math.round(((i + 1) / totalFiles) * 100))
       } catch (err) {
-        console.error('Failed to read file:', err)
-        setUploadError(`Gagal membaca file "${file.name}"`)
+        setUploadError(`Gagal upload "${file.name}": ${err.message}`)
       }
+
+      setUploadProgress(Math.round(((i + 1) / uploadedFiles.length) * 100))
     }
-    
-    if (newFiles.length > 0) {
-      const updatedFiles = [...files, ...newFiles]
-      setFiles(updatedFiles)
-      // Bug 3 fix - kirim data langsung ke saveData, tidak baca state lama
-      await saveData({ files: updatedFiles, folders, trash })
-    }
-    
+
     setUploading(false)
     setUploadProgress(0)
     setShowUpload(false)
-    
-    // Reset input
     event.target.value = ''
-  }, [files, folders, trash, currentFolder, saveData])
+  }, [currentFolder])
 
-  // Delete file (move to trash)
+  // Move file to trash (soft delete)
   const deleteFile = useCallback(async (fileId) => {
-    const fileToDelete = files.find(f => f.id === fileId)
-    if (!fileToDelete) return
-    
-    const updatedFiles = files.filter(f => f.id !== fileId)
-    const updatedTrash = [...trash, { ...fileToDelete, isTrashed: true, deletedAt: Date.now() }]
-    
-    setFiles(updatedFiles)
-    setTrash(updatedTrash)
-    setSelectedFiles(prev => prev.filter(id => id !== fileId))
-    
-    // Bug 3 fix - kirim data langsung
-    await saveData({ files: updatedFiles, folders, trash: updatedTrash })
-  }, [files, trash, saveData])
+    try {
+      await fetch(`${API}/files/${fileId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isTrashed: true })
+      })
+      setFiles(prev => prev.map(f => f.id === fileId ? { ...f, isTrashed: true } : f))
+      setSelectedFiles(prev => prev.filter(id => id !== fileId))
+    } catch (err) {
+      setUploadError('Gagal menghapus file.')
+    }
+  }, [])
 
   // Restore from trash
   const restoreFile = useCallback(async (fileId) => {
-    const fileToRestore = trash.find(f => f.id === fileId)
-    if (!fileToRestore) return
-    
-    const { deletedAt, isTrashed, ...restoredFile } = fileToRestore
-    const updatedTrash = trash.filter(f => f.id !== fileId)
-    const updatedFiles = [...files, restoredFile]
-    
-    setTrash(updatedTrash)
-    setFiles(updatedFiles)
-    
-    // Bug 3 fix
-    await saveData({ files: updatedFiles, folders, trash: updatedTrash })
-  }, [files, trash, saveData])
+    try {
+      await fetch(`${API}/files/${fileId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isTrashed: false })
+      })
+      setFiles(prev => prev.map(f => f.id === fileId ? { ...f, isTrashed: false } : f))
+    } catch (err) {
+      setUploadError('Gagal memulihkan file.')
+    }
+  }, [])
 
-  // Permanent delete
+  // Permanent delete from R2
   const permanentDelete = useCallback(async (fileId) => {
-    const updatedTrash = trash.filter(f => f.id !== fileId)
-    setTrash(updatedTrash)
-    
-    // Bug 3 fix
-    await saveData({ files, folders, trash: updatedTrash })
-  }, [files, folders, trash, saveData])
+    try {
+      await fetch(`${API}/files/${fileId}`, { method: 'DELETE' })
+      setFiles(prev => prev.filter(f => f.id !== fileId))
+    } catch (err) {
+      setUploadError('Gagal menghapus permanen.')
+    }
+  }, [])
 
   // Toggle star
   const toggleStar = useCallback(async (fileId) => {
-    const updatedFiles = files.map(f => 
-      f.id === fileId ? { ...f, isStarred: !f.isStarred } : f
-    )
-    setFiles(updatedFiles)
-    
-    // Bug 3 fix
-    await saveData({ files: updatedFiles, folders, trash })
-  }, [files, folders, trash, saveData])
+    const file = files.find(f => f.id === fileId)
+    if (!file) return
+    const newStarred = !file.isStarred
+    try {
+      await fetch(`${API}/files/${fileId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isStarred: newStarred })
+      })
+      setFiles(prev => prev.map(f => f.id === fileId ? { ...f, isStarred: newStarred } : f))
+    } catch (err) {
+      setUploadError('Gagal memperbarui bintang.')
+    }
+  }, [files])
 
   // Create folder
   const createFolder = useCallback(async (name) => {
-    const newFolder = {
-      id: `folder_${Date.now()}`,
-      name: name || 'Folder Baru',
-      parentId: currentFolder,
-      createdAt: Date.now()
+    try {
+      const res = await fetch(`${API}/folders`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name || 'Folder Baru' })
+      })
+      if (res.ok) {
+        const newFolder = await res.json()
+        setFolders(prev => [...prev, newFolder])
+      }
+    } catch (err) {
+      setUploadError('Gagal membuat folder.')
     }
-    
-    const updatedFolders = [...folders, newFolder]
-    setFolders(updatedFolders)
-    
-    // Bug 3 fix
-    await saveData({ files, folders: updatedFolders, trash })
-  }, [files, folders, trash, currentFolder, saveData])
+  }, [])
 
   // Get file icon
   const getFileIcon = (type) => {
@@ -343,33 +222,24 @@ function Gudang() {
         ))}
         <button className="gudang-folder" onClick={() => createFolder()}>
           <span>+</span>
-          <span>Baru</span>
+          <span>Folder</span>
         </button>
       </div>
 
-      {/* Upload Progress Bar (Bug 4 fix) */}
-      {uploading && (
-        <div className="upload-progress-container">
-          <div className="upload-progress-bar">
-            <div 
-              className="upload-progress-fill" 
-              style={{ width: `${uploadProgress}%` }}
-            />
-          </div>
-          <span className="upload-progress-text">{uploadProgress}%</span>
+      {/* Upload Error */}
+      {uploadError && (
+        <div className="gudang-error" onClick={() => setUploadError(null)}>
+          ⚠️ {uploadError}
         </div>
       )}
 
-      {/* Error Message */}
-      {uploadError && (
-        <div className="gudang-error">
-          ⚠️ {uploadError}
-          <button onClick={() => setUploadError(null)}>✕</button>
-        </div>
+      {/* Loading */}
+      {loading && (
+        <div className="gudang-empty">Memuat dari cloud... ☁️</div>
       )}
 
       {/* Starred Section */}
-      {starredFiles.length > 0 && !showTrash && !searchQuery && (
+      {!loading && !showTrash && starredFiles.length > 0 && (
         <div className="gudang-section">
           <h3 className="gudang-section-title">⭐ Favorit</h3>
           <div className={`gudang-files ${viewMode}`}>
@@ -395,7 +265,7 @@ function Gudang() {
           {showTrash ? '🗑️ Sampah' : '📁 File'}
         </h3>
         
-        {filteredFiles.length === 0 ? (
+        {!loading && filteredFiles.length === 0 ? (
           <div className="gudang-empty">
             {showTrash ? 'Sampah kosong' : 'Belum ada file'}
           </div>
@@ -487,7 +357,7 @@ function Gudang() {
         <div className="modal-overlay" onClick={() => !uploading && setShowUpload(false)}>
           <div className="modal-content upload-modal" onClick={e => e.stopPropagation()}>
             <h3>📤 Upload File</h3>
-            <p>Maksimal 5MB per file, total 10MB</p>
+            <p>Upload file ke cloud — tidak ada batas ukuran harian</p>
             
             <label className="upload-area">
               <input
@@ -527,10 +397,13 @@ function Gudang() {
         .gudang-page {
           width: 100%;
           height: 100%;
-          background: linear-gradient(180deg, #0A0E1A 0%, #0F1420 100%);
+          background: #0D0D0D;
           display: flex;
           flex-direction: column;
           overflow: hidden;
+          position: relative;
+          color: #FFFFFF;
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
         }
 
         .gudang-header {
@@ -549,14 +422,18 @@ function Gudang() {
           gap: 12px;
         }
 
+        .gudang-header-right {
+          display: flex;
+          gap: 8px;
+        }
+
         .gudang-back {
           background: none;
           border: none;
           color: #8B92A8;
+          font-size: 20px;
           cursor: pointer;
-          padding: 8px;
-          display: flex;
-          align-items: center;
+          padding: 4px 8px;
         }
 
         .gudang-title {
@@ -566,41 +443,36 @@ function Gudang() {
           margin: 0;
         }
 
-        .gudang-header-right {
-          display: flex;
-          gap: 8px;
-        }
-
         .gudang-view-btn {
-          background: rgba(255, 255, 255, 0.05);
-          border: 1px solid rgba(255, 255, 255, 0.08);
-          border-radius: 8px;
+          background: none;
+          border: none;
           color: #8B92A8;
-          font-size: 16px;
+          font-size: 18px;
           cursor: pointer;
-          padding: 6px 10px;
+          padding: 4px 8px;
+          border-radius: 6px;
         }
 
         .gudang-view-btn.active {
-          background: rgba(255, 107, 0, 0.15);
           color: #FF6B00;
-          border-color: rgba(255, 107, 0, 0.3);
+          background: rgba(255, 107, 0, 0.1);
         }
 
         .gudang-search {
-          padding: 8px 16px;
+          padding: 12px 16px;
           flex-shrink: 0;
         }
 
         .gudang-search-input {
           width: 100%;
-          padding: 10px 14px;
           background: rgba(255, 255, 255, 0.05);
           border: 1px solid rgba(255, 255, 255, 0.08);
-          border-radius: 10px;
+          border-radius: 12px;
+          padding: 10px 16px;
           color: #FFFFFF;
           font-size: 14px;
           outline: none;
+          box-sizing: border-box;
         }
 
         .gudang-search-input::placeholder {
@@ -610,7 +482,7 @@ function Gudang() {
         .gudang-folders {
           display: flex;
           gap: 8px;
-          padding: 8px 16px;
+          padding: 0 16px 12px;
           overflow-x: auto;
           flex-shrink: 0;
         }
@@ -619,71 +491,33 @@ function Gudang() {
           display: flex;
           align-items: center;
           gap: 6px;
-          padding: 8px 14px;
+          padding: 6px 14px;
           background: rgba(255, 255, 255, 0.05);
           border: 1px solid rgba(255, 255, 255, 0.08);
           border-radius: 20px;
           color: #8B92A8;
           font-size: 13px;
-          cursor: pointer;
           white-space: nowrap;
+          cursor: pointer;
           transition: all 200ms ease;
         }
 
         .gudang-folder.active {
           background: rgba(255, 107, 0, 0.15);
-          color: #FF6B00;
           border-color: rgba(255, 107, 0, 0.3);
-        }
-
-        /* Upload Progress Bar (Bug 4) */
-        .upload-progress-container {
-          padding: 8px 16px;
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          flex-shrink: 0;
-        }
-
-        .upload-progress-bar {
-          flex: 1;
-          height: 4px;
-          background: rgba(255, 255, 255, 0.1);
-          border-radius: 2px;
-          overflow: hidden;
-        }
-
-        .upload-progress-fill {
-          height: 100%;
-          background: linear-gradient(90deg, #FF6B00, #FF8C00);
-          border-radius: 2px;
-          transition: width 300ms ease;
-        }
-
-        .upload-progress-text {
-          font-size: 11px;
           color: #FF6B00;
-          font-weight: 500;
-          min-width: 32px;
         }
 
         .gudang-error {
-          padding: 10px 16px;
-          background: rgba(239, 68, 68, 0.1);
+          margin: 0 16px 8px;
+          padding: 10px 14px;
+          background: rgba(239, 68, 68, 0.15);
+          border: 1px solid rgba(239, 68, 68, 0.3);
+          border-radius: 10px;
           color: #EF4444;
-          font-size: 12px;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          flex-shrink: 0;
-        }
-
-        .gudang-error button {
-          background: none;
-          border: none;
-          color: #EF4444;
+          font-size: 13px;
           cursor: pointer;
-          font-size: 14px;
+          flex-shrink: 0;
         }
 
         .gudang-section {
@@ -747,6 +581,7 @@ function Gudang() {
         .file-icon {
           color: #8B92A8;
           flex-shrink: 0;
+          font-size: 20px;
         }
 
         .file-info {
@@ -777,6 +612,7 @@ function Gudang() {
           cursor: pointer;
           padding: 4px;
           flex-shrink: 0;
+          font-size: 16px;
         }
 
         .file-star.active {
@@ -792,6 +628,7 @@ function Gudang() {
           flex-shrink: 0;
           opacity: 0;
           transition: opacity 200ms ease;
+          font-size: 16px;
         }
 
         .gudang-file:hover .file-delete {
@@ -853,7 +690,6 @@ function Gudang() {
           cursor: not-allowed;
         }
 
-        /* Modal */
         .modal-overlay {
           position: fixed;
           top: 0;
@@ -865,7 +701,6 @@ function Gudang() {
           align-items: center;
           justify-content: center;
           z-index: 1000;
-          animation: fadeIn 200ms ease;
           padding: 16px;
         }
 
@@ -876,7 +711,6 @@ function Gudang() {
           padding: 24px;
           width: 100%;
           max-width: 400px;
-          animation: scaleIn 200ms ease;
         }
 
         .modal-content h3 {
@@ -917,10 +751,6 @@ function Gudang() {
         .upload-dropzone.disabled {
           opacity: 0.5;
           cursor: not-allowed;
-        }
-
-        .upload-dropzone svg {
-          color: #FF6B00;
         }
 
         .upload-modal-progress {
@@ -967,16 +797,6 @@ function Gudang() {
           cursor: not-allowed;
         }
 
-        @keyframes fadeIn {
-          from { opacity: 0; }
-          to { opacity: 1; }
-        }
-
-        @keyframes scaleIn {
-          from { opacity: 0; transform: scale(0.95); }
-          to { opacity: 1; transform: scale(1); }
-        }
-
         @media (min-width: 768px) {
           .gudang-page {
             max-width: 430px;
@@ -996,8 +816,8 @@ function Gudang() {
 
 function formatSize(bytes) {
   if (!bytes) return '0 B'
-  const sizes = ['B', 'KB', 'MB']
-  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), 2)
+  const sizes = ['B', 'KB', 'MB', 'GB']
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), 3)
   return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${sizes[i]}`
 }
 
