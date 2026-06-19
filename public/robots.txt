@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://calculator-pro-48o.pages.dev/sitemap.xml
