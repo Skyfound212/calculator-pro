@@ -6,14 +6,21 @@ function corsHeaders() {
   }
 }
 
+function bucketError() {
+  return Response.json(
+    { error: 'R2 bucket belum terkonfigurasi. Pastikan binding bernama GUDANG_BUCKET sudah ditambahkan di Cloudflare Pages → Settings → Bindings, lalu trigger redeploy.' },
+    { status: 503, headers: corsHeaders() }
+  )
+}
+
 export async function onRequestOptions() {
   return new Response(null, { status: 204, headers: corsHeaders() })
 }
 
 export async function onRequestGet({ env }) {
+  if (!env.GUDANG_BUCKET) return bucketError()
   try {
     const list = await env.GUDANG_BUCKET.list({ prefix: 'meta/' })
-
     const files = await Promise.all(
       list.objects.map(async (obj) => {
         const item = await env.GUDANG_BUCKET.get(obj.key)
@@ -21,7 +28,6 @@ export async function onRequestGet({ env }) {
         return item.json()
       })
     )
-
     return Response.json(files.filter(Boolean), { headers: corsHeaders() })
   } catch (err) {
     return Response.json({ error: err.message }, { status: 500, headers: corsHeaders() })
@@ -29,6 +35,7 @@ export async function onRequestGet({ env }) {
 }
 
 export async function onRequestPost({ env, request }) {
+  if (!env.GUDANG_BUCKET) return bucketError()
   try {
     const formData = await request.formData()
     const file = formData.get('file')
@@ -39,15 +46,11 @@ export async function onRequestPost({ env, request }) {
     }
 
     const id = crypto.randomUUID()
-
-    // Use arrayBuffer — more reliable than stream() in Workers
     const buffer = await file.arrayBuffer()
     const size = buffer.byteLength
 
     await env.GUDANG_BUCKET.put(`files/${id}`, buffer, {
-      httpMetadata: {
-        contentType: file.type || 'application/octet-stream'
-      }
+      httpMetadata: { contentType: file.type || 'application/octet-stream' }
     })
 
     const metadata = {
