@@ -133,7 +133,10 @@ function Gudang() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: name || 'Folder Baru' })
       })
-      if (res.ok) setFolders(prev => [...prev, await res.json()])
+      if (res.ok) {
+        const newFolder = await res.json()
+        setFolders(prev => [...prev, newFolder])
+      }
     } catch {
       setUploadError('Gagal membuat folder.')
     }
