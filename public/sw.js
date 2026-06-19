@@ -1,4 +1,4 @@
-const CACHE_NAME = 'calculatorpro-v1';
+const CACHE_NAME = 'calculatorpro-v2';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -9,7 +9,9 @@ const STATIC_ASSETS = [
   '/icons/icon-152.png',
   '/icons/icon-192.png',
   '/icons/icon-384.png',
-  '/icons/icon-512.png'
+  '/icons/icon-512.png',
+  '/manifest.json',
+  '/robots.txt'
 ];
 
 // Cache size limit (50MB)
