@@ -354,7 +354,7 @@ export default function Gudang() {
                   onTap={() => {
                     if (selectedIds.length > 0) { toggleSelect(file.id); return }
                     if (isImage(file.type) || isVideo(file.type)) setPreviewFile(file)
-                    else downloadFile(file)
+                    else window.open(`${API}/files/${file.id}`, '_blank')
                   }}
                   onLongPress={() => toggleSelect(file.id)}
                   onAction={() => { setActionFile(file) }}
@@ -371,7 +371,7 @@ export default function Gudang() {
                   onTap={() => {
                     if (selectedIds.length > 0) { toggleSelect(file.id); return }
                     if (isImage(file.type) || isVideo(file.type)) setPreviewFile(file)
-                    else downloadFile(file)
+                    else window.open(`${API}/files/${file.id}`, '_blank')
                   }}
                   onSelect={() => toggleSelect(file.id)}
                   onAction={() => setActionFile(file)}
