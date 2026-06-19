@@ -332,41 +332,38 @@ function Calculator() {
         <CalcButton label="M+" onClick={() => handleMemory('M+')} variant="memory" />
         <CalcButton label="M-" onClick={() => handleMemory('M-')} variant="memory" />
         <CalcButton label="MS" onClick={() => handleMemory('MS')} variant="memory" />
-        <CalcButton label="AC" onClick={clearAll} variant="function" />
       </div>
 
-      {/* Button Grid */}
+      {/* Button Grid — standard 4×5 layout */}
       <div className="calc-button-grid">
-        {/* Row 1: Functions */}
-        <CalcButton label="( )" onClick={inputParentheses} variant="function" />
+        {/* Row 1 */}
+        <CalcButton label="AC" onClick={clearAll} variant="function" />
+        <CalcButton label="+/-" onClick={toggleSign} variant="function" />
         <CalcButton label="%" onClick={inputPercent} variant="function" />
-        <CalcButton label="√" onClick={inputSquareRoot} variant="function" />
-        <CalcButton label="^" onClick={() => inputOperator('^')} variant="function" />
         <CalcButton label="÷" onClick={() => inputOperator('÷')} variant="operator" />
 
-        {/* Row 2: 7 8 9 × */}
+        {/* Row 2 */}
         <CalcButton label="7" onClick={() => inputNumber(7)} variant="number" />
         <CalcButton label="8" onClick={() => inputNumber(8)} variant="number" />
         <CalcButton label="9" onClick={() => inputNumber(9)} variant="number" />
-        <CalcButton label="×" onClick={() => inputOperator('×')} variant="operator" className="tall" />
+        <CalcButton label="×" onClick={() => inputOperator('×')} variant="operator" />
 
-        {/* Row 3: 4 5 6 − */}
+        {/* Row 3 */}
         <CalcButton label="4" onClick={() => inputNumber(4)} variant="number" />
         <CalcButton label="5" onClick={() => inputNumber(5)} variant="number" />
         <CalcButton label="6" onClick={() => inputNumber(6)} variant="number" />
-        <CalcButton label="−" onClick={() => inputOperator('-')} variant="operator" className="tall" />
+        <CalcButton label="−" onClick={() => inputOperator('-')} variant="operator" />
 
-        {/* Row 4: 1 2 3 + */}
+        {/* Row 4 */}
         <CalcButton label="1" onClick={() => inputNumber(1)} variant="number" />
         <CalcButton label="2" onClick={() => inputNumber(2)} variant="number" />
         <CalcButton label="3" onClick={() => inputNumber(3)} variant="number" />
-        <CalcButton label="+" onClick={() => inputOperator('+')} variant="operator" className="tall" />
+        <CalcButton label="+" onClick={() => inputOperator('+')} variant="operator" />
 
-        {/* Row 5: +/- 0 . = */}
-        <CalcButton label="+/-" onClick={toggleSign} variant="function" />
-        <CalcButton label="0" onClick={() => inputNumber(0)} variant="number" />
+        {/* Row 5 */}
+        <CalcButton label="0" onClick={() => inputNumber(0)} variant="number" className="wide" />
         <CalcButton label="." onClick={inputDecimal} variant="function" />
-        <CalcButton label="=" onClick={inputEquals} variant="equals" className="tall" />
+        <CalcButton label="=" onClick={inputEquals} variant="equals" />
       </div>
 
       {/* Menu Panel (Slide-up) */}
@@ -501,7 +498,7 @@ function Calculator() {
         /* Memory Row */
         .calc-memory-row {
           display: grid;
-          grid-template-columns: repeat(6, 1fr);
+          grid-template-columns: repeat(5, 1fr);
           gap: 8px;
           padding: 0 12px 8px;
         }
@@ -584,10 +581,12 @@ function Calculator() {
           color: #FFFFFF;
         }
 
-        .calc-btn.tall {
-          grid-row: span 2;
+        .calc-btn.wide {
+          grid-column: span 2;
           aspect-ratio: auto;
           border-radius: 50px;
+          justify-content: flex-start;
+          padding-left: 28px;
         }
 
         /* Menu Panel */
