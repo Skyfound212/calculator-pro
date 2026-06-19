@@ -243,6 +243,8 @@ function RuangKerja() {
   const [showPreview, setShowPreview] = useState(true)
   const [showTemplates, setShowTemplates] = useState(false)
   const [showSendModal, setShowSendModal] = useState(false)
+  const [folders, setFolders] = useState([{ id: 'root', name: 'Semua File' }])
+  const [selectedFolderId, setSelectedFolderId] = useState('root')
   const [savedDrafts, setSavedDrafts] = useState([])
   const [showDrafts, setShowDrafts] = useState(false)
   const [wordCount, setWordCount] = useState(0)
@@ -258,6 +260,14 @@ function RuangKerja() {
       console.error('Failed to load drafts:', err)
     }
   }, [])
+
+  useEffect(() => {
+    if (!showSendModal) return
+    fetch('/api/folders')
+      .then(r => r.ok ? r.json() : [])
+      .then(data => { if (data.length) setFolders(data) })
+      .catch(() => {})
+  }, [showSendModal])
 
   useEffect(() => {
     const words = content.trim() ? content.trim().split(/\s+/).length : 0
@@ -512,7 +522,7 @@ function RuangKerja() {
       type: format ? `${format.category === 'deployment' ? 'text' : 'application'}/${selectedFormat}` : 'text/plain',
       size: contentBlob.size,
       content: `data:text/plain;base64,${btoa(unescape(encodeURIComponent(content)))}`,
-      folderId: 'root',
+      folderId: selectedFolderId,
       createdAt: Date.now(),
       updatedAt: Date.now(),
       isStarred: false,
@@ -1133,6 +1143,29 @@ function RuangKerja() {
               <span style={{ color: '#8B92A8', fontSize: '12px' }}>
                 {formatSize(new Blob([content]).size)}
               </span>
+            </div>
+            {/* Folder picker */}
+            <div style={{ marginTop: '12px' }}>
+              <p style={{ color: '#8B92A8', fontSize: '12px', marginBottom: '8px' }}>Simpan ke folder:</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '140px', overflowY: 'auto' }}>
+                {folders.map(f => (
+                  <button
+                    key={f.id}
+                    onClick={() => setSelectedFolderId(f.id)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '10px',
+                      padding: '10px 14px',
+                      background: selectedFolderId === f.id ? 'rgba(255,107,0,0.15)' : 'rgba(255,255,255,0.04)',
+                      border: selectedFolderId === f.id ? '1px solid rgba(255,107,0,0.4)' : '1px solid rgba(255,255,255,0.07)',
+                      borderRadius: '10px', cursor: 'pointer', textAlign: 'left', width: '100%'
+                    }}
+                  >
+                    <span style={{ fontSize: '16px' }}>📁</span>
+                    <span style={{ fontSize: '14px', color: selectedFolderId === f.id ? '#FF6B00' : '#CBD5E1', fontWeight: selectedFolderId === f.id ? 600 : 400 }}>{f.name}</span>
+                    {selectedFolderId === f.id && <span style={{ marginLeft: 'auto', color: '#FF6B00', fontSize: '16px' }}>✓</span>}
+                  </button>
+                ))}
+              </div>
             </div>
             <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
               <button 
