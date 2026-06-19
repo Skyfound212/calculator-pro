@@ -75,6 +75,9 @@ export default function Gudang() {
   const [actionFolder, setActionFolder] = useState(null)
   const [showFolderRenameDialog, setShowFolderRenameDialog] = useState(false)
   const [folderRenameName, setFolderRenameName] = useState('')
+  const [inAppPreview, setInAppPreview] = useState(null)
+  const [previewContent, setPreviewContent] = useState('')
+  const [previewLoading, setPreviewLoading] = useState(false)
 
   const fileInputRef = useRef()
   const folderPressTimer = useRef()
@@ -216,6 +219,23 @@ export default function Gudang() {
     a.click()
   }
 
+  const openInAppPreview = useCallback(async (file) => {
+    const cat = getFileCategory(file.type, file.name)
+    if (cat === 'image' || cat === 'video') { setPreviewFile(file); return }
+    setPreviewContent('')
+    setInAppPreview({ file, cat })
+    const textCats = ['text', 'code', 'doc', 'sheet']
+    if (textCats.includes(cat)) {
+      setPreviewLoading(true)
+      try {
+        const res = await fetch(`${API}/files/${file.id}`)
+        const text = await res.text()
+        setPreviewContent(text)
+      } catch { setPreviewContent('Gagal memuat konten file.') }
+      finally { setPreviewLoading(false) }
+    }
+  }, [])
+
   const selectAll = () => setSelectedIds(visibleFiles.map(f => f.id))
   const clearSelect = () => setSelectedIds([])
   const toggleSelect = (id) => setSelectedIds(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id])
@@ -354,7 +374,7 @@ export default function Gudang() {
                   onTap={() => {
                     if (selectedIds.length > 0) { toggleSelect(file.id); return }
                     if (isImage(file.type) || isVideo(file.type)) setPreviewFile(file)
-                    else window.open(`${API}/files/${file.id}`, '_blank')
+                    else openInAppPreview(file)
                   }}
                   onLongPress={() => toggleSelect(file.id)}
                   onAction={() => { setActionFile(file) }}
@@ -371,7 +391,7 @@ export default function Gudang() {
                   onTap={() => {
                     if (selectedIds.length > 0) { toggleSelect(file.id); return }
                     if (isImage(file.type) || isVideo(file.type)) setPreviewFile(file)
-                    else window.open(`${API}/files/${file.id}`, '_blank')
+                    else openInAppPreview(file)
                   }}
                   onSelect={() => toggleSelect(file.id)}
                   onAction={() => setActionFile(file)}
@@ -534,6 +554,60 @@ export default function Gudang() {
               <SheetBtn icon="🗑️" label="Hapus Folder" onClick={() => deleteFolder(actionFolder.id)} danger />
             </div>
             <button className="gd-btn secondary" style={{margin:'8px 16px 16px'}} onClick={() => setActionFolder(null)}>Tutup</button>
+          </div>
+        </div>
+      )}
+
+      {/* In-App Preview Modal */}
+      {inAppPreview && (
+        <div className="gd-preview-overlay" onClick={() => setInAppPreview(null)}>
+          <div className="gd-preview-modal" onClick={e => e.stopPropagation()}>
+            <div className="gd-preview-header">
+              <button className="gd-icon-btn light" onClick={() => setInAppPreview(null)}>✕</button>
+              <span className="gd-preview-name">{inAppPreview.file.name}</span>
+              <button className="gd-icon-btn light" onClick={() => downloadFile(inAppPreview.file)} title="Download">⬇</button>
+            </div>
+
+            {/* Audio */}
+            {inAppPreview.cat === 'audio' && (
+              <div className="gd-iap-center">
+                <div style={{fontSize:72,marginBottom:16}}>🎵</div>
+                <div style={{fontSize:15,color:'#CBD5E1',marginBottom:20,textAlign:'center',padding:'0 24px'}}>{inAppPreview.file.name}</div>
+                <audio controls src={`${API}/files/${inAppPreview.file.id}`} style={{width:'100%',maxWidth:340}} autoPlay />
+              </div>
+            )}
+
+            {/* PDF */}
+            {inAppPreview.cat === 'pdf' && (
+              <iframe
+                src={`${API}/files/${inAppPreview.file.id}`}
+                title={inAppPreview.file.name}
+                style={{flex:1,width:'100%',border:'none',background:'#fff'}}
+              />
+            )}
+
+            {/* Text / Code / Doc / Sheet */}
+            {['text','code','doc','sheet'].includes(inAppPreview.cat) && (
+              <div className="gd-iap-text-wrap">
+                {previewLoading ? (
+                  <div className="gd-iap-center"><span className="gd-spinner" style={{fontSize:28}}>⏳</span></div>
+                ) : (
+                  <pre className="gd-iap-code">{previewContent}</pre>
+                )}
+              </div>
+            )}
+
+            {/* Zip / Slide / Unknown */}
+            {['zip','slide'].includes(inAppPreview.cat) && (
+              <div className="gd-iap-center">
+                <div style={{fontSize:72,marginBottom:16}}>{getIcon(inAppPreview.file.type, inAppPreview.file.name)}</div>
+                <div style={{fontSize:15,color:'#94A3B8',marginBottom:8,textAlign:'center'}}>{inAppPreview.file.name}</div>
+                <div style={{fontSize:13,color:'#64748B',marginBottom:28,textAlign:'center'}}>File ini tidak dapat ditampilkan dalam app</div>
+                <button onClick={() => downloadFile(inAppPreview.file)} style={{
+                  padding:'12px 28px',borderRadius:12,background:'#FF6B00',border:'none',color:'#FFF',fontSize:14,fontWeight:600,cursor:'pointer'
+                }}>⬇ Download</button>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1100,6 +1174,24 @@ function Styles() {
       .gd-btn { padding: 14px; border-radius: 14px; font-size: 15px; }
       .gd-btn:active { opacity: 0.8; }
       .gd-input { padding: 14px; border-radius: 12px; font-size: 16px; }
+
+      /* ── In-App Preview ── */
+      .gd-iap-center {
+        flex: 1; display: flex; flex-direction: column;
+        align-items: center; justify-content: center;
+        padding: 32px 20px;
+      }
+      .gd-iap-text-wrap {
+        flex: 1; overflow: auto; padding: 0;
+        background: #0D0D16;
+      }
+      .gd-iap-code {
+        margin: 0; padding: 16px;
+        font-family: 'Courier New', Consolas, monospace;
+        font-size: 13px; line-height: 1.6;
+        color: #CBD5E1; white-space: pre-wrap;
+        word-break: break-all; min-height: 100%;
+      }
     `}</style>
   )
 }
