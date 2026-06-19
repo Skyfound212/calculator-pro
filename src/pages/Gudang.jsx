@@ -4,16 +4,16 @@ import { useNavigate } from 'react-router-dom'
 const API = '/api'
 
 const FILE_TYPES = {
-  image: { exts: ['jpg','jpeg','png','gif','webp','svg','bmp'], icon: '🖼️', color: '#10B981' },
-  video: { exts: ['mp4','mov','avi','mkv','webm','m4v'], icon: '🎬', color: '#8B5CF6' },
-  audio: { exts: ['mp3','wav','ogg','m4a','flac','aac'], icon: '🎵', color: '#F59E0B' },
-  pdf:   { exts: ['pdf'], icon: '📕', color: '#EF4444' },
-  doc:   { exts: ['doc','docx','odt','rtf'], icon: '📝', color: '#3B82F6' },
-  sheet: { exts: ['xls','xlsx','csv','ods'], icon: '📊', color: '#10B981' },
-  slide: { exts: ['ppt','pptx','odp'], icon: '📊', color: '#F97316' },
-  zip:   { exts: ['zip','rar','7z','tar','gz'], icon: '📦', color: '#6B7280' },
-  code:  { exts: ['js','ts','jsx','tsx','json','html','css','py','java','cpp','c'], icon: '💻', color: '#06B6D4' },
-  text:  { exts: ['txt','md','log'], icon: '📄', color: '#9CA3AF' },
+  image: { exts: ['jpg','jpeg','png','gif','webp','svg','bmp'], icon: 'ðŸ–¼ï¸', color: '#10B981' },
+  video: { exts: ['mp4','mov','avi','mkv','webm','m4v'], icon: 'ðŸŽ¬', color: '#8B5CF6' },
+  audio: { exts: ['mp3','wav','ogg','m4a','flac','aac'], icon: 'ðŸŽµ', color: '#F59E0B' },
+  pdf:   { exts: ['pdf'], icon: 'ðŸ“•', color: '#EF4444' },
+  doc:   { exts: ['doc','docx','odt','rtf'], icon: 'ðŸ“', color: '#3B82F6' },
+  sheet: { exts: ['xls','xlsx','csv','ods'], icon: 'ðŸ“Š', color: '#10B981' },
+  slide: { exts: ['ppt','pptx','odp'], icon: 'ðŸ“Š', color: '#F97316' },
+  zip:   { exts: ['zip','rar','7z','tar','gz'], icon: 'ðŸ“¦', color: '#6B7280' },
+  code:  { exts: ['js','ts','jsx','tsx','json','html','css','py','java','cpp','c'], icon: 'ðŸ’»', color: '#06B6D4' },
+  text:  { exts: ['txt','md','log'], icon: 'ðŸ“„', color: '#9CA3AF' },
 }
 
 function getFileCategory(type, name) {
@@ -27,7 +27,7 @@ function getFileCategory(type, name) {
   return 'text'
 }
 
-function getIcon(type, name) { return FILE_TYPES[getFileCategory(type, name)]?.icon || '📎' }
+function getIcon(type, name) { return FILE_TYPES[getFileCategory(type, name)]?.icon || 'ðŸ“Ž' }
 function getColor(type, name) { return FILE_TYPES[getFileCategory(type, name)]?.color || '#6B7280' }
 function isImage(type) { return type?.startsWith('image/') }
 function isVideo(type) { return type?.startsWith('video/') }
@@ -70,11 +70,6 @@ export default function Gudang() {
   const [actionFile, setActionFile] = useState(null)
   const [showRenameDialog, setShowRenameDialog] = useState(false)
   const [renameName, setRenameName] = useState('')
-
-  // Folder action states (NEW)
-  const [actionFolder, setActionFolder] = useState(null)
-  const [showFolderRenameDialog, setShowFolderRenameDialog] = useState(false)
-  const [folderRenameName, setFolderRenameName] = useState('')
 
   const fileInputRef = useRef()
 
@@ -172,26 +167,6 @@ export default function Gudang() {
     setActionFile(null)
   }
 
-  // Folder actions (NEW)
-  const deleteFolder = async (id) => {
-    await fetch(`${API}/folders/${id}`, { method: 'DELETE' })
-    setFolders(p => p.filter(f => f.id !== id))
-    if (currentFolder === id) setCurrentFolder('root')
-    setActionFolder(null)
-  }
-
-  const renameFolder = async () => {
-    if (!folderRenameName.trim() || !actionFolder) return
-    await fetch(`${API}/folders/${actionFolder.id}`, { 
-      method: 'PATCH', 
-      headers: {'Content-Type':'application/json'}, 
-      body: JSON.stringify({ name: folderRenameName.trim() }) 
-    })
-    setFolders(p => p.map(f => f.id === actionFolder.id ? { ...f, name: folderRenameName.trim() } : f))
-    setShowFolderRenameDialog(false)
-    setActionFolder(null)
-  }
-
   const createFolder = async () => {
     const name = folderName.trim() || 'Folder Baru'
     try {
@@ -220,19 +195,19 @@ export default function Gudang() {
 
   return (
     <div className="gd-root">
-      {/* ── Header ── */}
+      {/* â”€â”€ Header â”€â”€ */}
       <div className="gd-header">
-        <button className="gd-icon-btn" onClick={() => navigate('/skyroom')}>⬅</button>
+        <button className="gd-icon-btn" onClick={() => navigate('/skyroom')}>â¬…</button>
         <div className="gd-header-title">
-          {showTrash ? '🗑️ Sampah' : currentFolderName}
+          {showTrash ? 'ðŸ—‘ï¸ Sampah' : currentFolderName}
         </div>
         <div className="gd-header-right">
           {selectedIds.length > 0 && (
-            <button className="gd-icon-btn" onClick={clearSelect}>✕</button>
+            <button className="gd-icon-btn" onClick={clearSelect}>âœ•</button>
           )}
-          <button className="gd-icon-btn" onClick={() => setShowSortMenu(p => !p)}>⇅</button>
-          <button className={`gd-icon-btn ${viewMode==='grid'?'active':''}`} onClick={() => setViewMode('grid')}>⊞</button>
-          <button className={`gd-icon-btn ${viewMode==='list'?'active':''}`} onClick={() => setViewMode('list')}>☰</button>
+          <button className="gd-icon-btn" onClick={() => setShowSortMenu(p => !p)}>â‡…</button>
+          <button className={`gd-icon-btn ${viewMode==='grid'?'active':''}`} onClick={() => setViewMode('grid')}>âŠž</button>
+          <button className={`gd-icon-btn ${viewMode==='list'?'active':''}`} onClick={() => setViewMode('list')}>â˜°</button>
         </div>
       </div>
 
@@ -241,85 +216,66 @@ export default function Gudang() {
         <div className="gd-sort-menu">
           {[['date','Tanggal'],['name','Nama'],['size','Ukuran']].map(([k,label]) => (
             <button key={k} className={`gd-sort-item ${sortBy===k?'active':''}`} onClick={() => { setSortBy(k); setShowSortMenu(false) }}>
-              {sortBy===k ? '● ' : '○ '}{label}
+              {sortBy===k ? 'â— ' : 'â—‹ '}{label}
             </button>
           ))}
         </div>
       )}
 
-      {/* ── Search ── */}
+      {/* â”€â”€ Search â”€â”€ */}
       <div className="gd-search-row">
         <div className="gd-search-wrap">
-          <span className="gd-search-icon">🔍</span>
+          <span className="gd-search-icon">ðŸ”</span>
           <input
             className="gd-search"
             placeholder="Cari file..."
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
           />
-          {searchQuery && <button className="gd-search-clear" onClick={() => setSearchQuery('')}>✕</button>}
+          {searchQuery && <button className="gd-search-clear" onClick={() => setSearchQuery('')}>âœ•</button>}
         </div>
       </div>
 
-      {/* ── Folder chips ── */}
+      {/* â”€â”€ Folder chips â”€â”€ */}
       {!showTrash && (
         <div className="gd-folders">
-          {folders.map(f => {
-            const pressTimer = useRef()
-            const handleTouchStart = () => {
-              pressTimer.current = setTimeout(() => {
-                if (f.id !== 'root') setActionFolder(f)
-              }, 500)
-            }
-            const handleTouchEnd = () => clearTimeout(pressTimer.current)
-
-            return (
-              <button 
-                key={f.id} 
-                className={`gd-chip ${currentFolder===f.id?'active':''}`} 
-                onClick={() => setCurrentFolder(f.id)}
-                onTouchStart={handleTouchStart}
-                onTouchEnd={handleTouchEnd}
-                onMouseDown={handleTouchStart}
-                onMouseUp={handleTouchEnd}
-                onMouseLeave={handleTouchEnd}
-              >
-                📁 {f.name}
-              </button>
-            )
-          })}
+          {folders.map(f => (
+            <button key={f.id} className={`gd-chip ${currentFolder===f.id?'active':''}`} onClick={() => setCurrentFolder(f.id)}>
+              ðŸ“ {f.name}
+            </button>
+          ))}
           <button className="gd-chip new" onClick={() => { setFolderName(''); setShowFolderDialog(true) }}>
             + Folder
           </button>
         </div>
       )}
 
-      {/* ── Error banner ── */}
+      {/* â”€â”€ Error banner â”€â”€ */}
       {error && (
         <div className="gd-banner error" onClick={() => setError(null)}>
-          ⚠️ {error}
+          âš ï¸ {error}
         </div>
       )}
 
-      {/* ── Selection bar ── */}
+      {/* â”€â”€ Selection bar â”€â”€ */}
       {selectedIds.length > 0 && (
         <div className="gd-select-bar">
           <span>{selectedIds.length} dipilih</span>
           <button onClick={selectAll}>Pilih semua</button>
-          <button onClick={() => { selectedIds.forEach(trashFile); clearSelect() }}>🗑️ Hapus</button>
-          <button onClick={() => { selectedIds.forEach(id => { const f = files.find(x=>x.id===id); if(f) downloadFile(f) }); clearSelect() }}>⬇ Download</button>
+          <button onClick={() => { selectedIds.forEach(trashFile); clearSelect() }}>ðŸ—‘ï¸ Hapus</button>
+          <button onClick={() => { selectedIds.forEach(id => { const f = files.find(x=>x.id===id); if(f) downloadFile(f) }); clearSelect() }}>â¬‡ Download</button>
         </div>
       )}
 
-      {/* ── File area ── */}
+      {/* â”€â”€ File area â”€â”€ */}
       <div className="gd-scroll" onClick={() => { setShowSortMenu(false) }}>
-        {loading && <div className="gd-empty"><span className="gd-spinner">⏳</span> Memuat...</div>}
+        {loading && <div className="gd-empty"><span className="gd-spinner">â³</span> Memuat...</div>}
 
         {!loading && visibleFiles.length === 0 && (
           <div className="gd-empty">
-            <div style={{fontSize:48}}>{showTrash ? '🗑️' : '📂'}</div>
+            <div style={{fontSize:48}}>{showTrash ? 'ðŸ—‘ï¸' : 'ðŸ“‚'}</div>
             <div>{showTrash ? 'Sampah kosong' : searchQuery ? 'Tidak ditemukan' : 'Belum ada file'}</div>
-            {!showTrash && !searchQuery && <div style={{fontSize:13,color:'#8B92A8',marginTop:4}}>Tap ＋ untuk upload</div>}
+            {!showTrash && !searchQuery && <div style={{fontSize:13,color:'#8B92A8',marginTop:4}}>Tap ï¼‹ untuk upload</div>}
           </div>
         )}
 
@@ -362,44 +318,44 @@ export default function Gudang() {
         )}
       </div>
 
-      {/* ── Bottom bar ── */}
+      {/* â”€â”€ Bottom bar â”€â”€ */}
       <div className="gd-bottom">
         <button className="gd-fab" onClick={() => setShowUpload(true)} title="Upload">
-          ＋
+          ï¼‹
         </button>
         <button className={`gd-bottom-btn ${showTrash?'active':''}`} onClick={() => { setShowTrash(p=>!p); setSelectedIds([]) }}>
-          🗑️ {showTrash ? 'Tutup' : 'Sampah'}
+          ðŸ—‘ï¸ {showTrash ? 'Tutup' : 'Sampah'}
         </button>
         {showTrash && selectedIds.length === 0 && (
           <button className="gd-bottom-btn danger" onClick={async () => {
             const trashed = files.filter(f => f.isTrashed)
             for (const f of trashed) await deleteFile(f.id)
           }}>
-            🗑️ Kosongkan
+            ðŸ—‘ï¸ Kosongkan
           </button>
         )}
       </div>
 
-      {/* ═══════════════════════════════════════
+      {/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
           MODALS
-      ═══════════════════════════════════════ */}
+      â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
 
       {/* Upload Modal */}
       {showUpload && (
         <Modal onClose={() => !uploading && setShowUpload(false)}>
-          <h3 className="modal-title">📤 Upload File</h3>
-          <p className="modal-sub">Foto, video, dokumen — tersimpan di Cloudflare R2</p>
+          <h3 className="modal-title">ðŸ“¤ Upload File</h3>
+          <p className="modal-sub">Foto, video, dokumen â€” tersimpan di Cloudflare R2</p>
           <label>
             <input ref={fileInputRef} type="file" multiple onChange={handleUpload} disabled={uploading} style={{display:'none'}} />
             <div className={`gd-dropzone ${uploading?'loading':''}`} onClick={() => !uploading && fileInputRef.current?.click()}>
               {uploading ? (
                 <>
                   <div className="gd-progress-bar"><div className="gd-progress-fill" style={{width:`${uploadProgress.pct}%`}} /></div>
-                  <span>{uploadProgress.current}/{uploadProgress.total} file · {uploadProgress.pct}%</span>
+                  <span>{uploadProgress.current}/{uploadProgress.total} file Â· {uploadProgress.pct}%</span>
                 </>
               ) : (
                 <>
-                  <span style={{fontSize:40}}>📤</span>
+                  <span style={{fontSize:40}}>ðŸ“¤</span>
                   <span>Tap untuk pilih file</span>
                   <span className="modal-sub">Semua jenis file didukung</span>
                 </>
@@ -413,7 +369,7 @@ export default function Gudang() {
       {/* Folder name dialog */}
       {showFolderDialog && (
         <Modal onClose={() => setShowFolderDialog(false)}>
-          <h3 className="modal-title">📁 Folder Baru</h3>
+          <h3 className="modal-title">ðŸ“ Folder Baru</h3>
           <input
             className="gd-input"
             placeholder="Nama folder..."
@@ -429,10 +385,10 @@ export default function Gudang() {
         </Modal>
       )}
 
-      {/* Rename dialog (file) */}
+      {/* Rename dialog */}
       {showRenameDialog && actionFile && (
         <Modal onClose={() => setShowRenameDialog(false)}>
-          <h3 className="modal-title">✏️ Ganti Nama</h3>
+          <h3 className="modal-title">âœï¸ Ganti Nama</h3>
           <input
             className="gd-input"
             value={renameName}
@@ -447,25 +403,7 @@ export default function Gudang() {
         </Modal>
       )}
 
-      {/* Rename dialog (folder) - NEW */}
-      {showFolderRenameDialog && actionFolder && (
-        <Modal onClose={() => setShowFolderRenameDialog(false)}>
-          <h3 className="modal-title">✏️ Ganti Nama Folder</h3>
-          <input
-            className="gd-input"
-            value={folderRenameName}
-            onChange={e => setFolderRenameName(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && renameFolder()}
-            autoFocus
-          />
-          <div className="modal-actions">
-            <button className="gd-btn secondary" onClick={() => setShowFolderRenameDialog(false)}>Batal</button>
-            <button className="gd-btn primary" onClick={renameFolder}>Simpan</button>
-          </div>
-        </Modal>
-      )}
-
-      {/* Action sheet (file) */}
+      {/* Action sheet */}
       {actionFile && !showRenameDialog && (
         <div className="gd-sheet-overlay" onClick={() => setActionFile(null)}>
           <div className="gd-sheet" onClick={e => e.stopPropagation()}>
@@ -474,46 +412,25 @@ export default function Gudang() {
               <span style={{fontSize:28}}>{getIcon(actionFile.type, actionFile.name)}</span>
               <div>
                 <div className="gd-sheet-name">{actionFile.name}</div>
-                <div className="gd-sheet-meta">{formatSize(actionFile.size)} · {formatDate(actionFile.uploadedAt)}</div>
+                <div className="gd-sheet-meta">{formatSize(actionFile.size)} Â· {formatDate(actionFile.uploadedAt)}</div>
               </div>
             </div>
             <div className="gd-sheet-actions">
               {!actionFile.isTrashed && <>
-                <SheetBtn icon="⬇" label="Download" onClick={() => { downloadFile(actionFile); setActionFile(null) }} />
-                <SheetBtn icon="⭐" label={actionFile.isStarred ? 'Hapus Bintang' : 'Bintangi'} onClick={() => { toggleStar(actionFile.id); setActionFile(null) }} />
+                <SheetBtn icon="â¬‡" label="Download" onClick={() => { downloadFile(actionFile); setActionFile(null) }} />
+                <SheetBtn icon="â­" label={actionFile.isStarred ? 'Hapus Bintang' : 'Bintangi'} onClick={() => { toggleStar(actionFile.id); setActionFile(null) }} />
                 {(isImage(actionFile.type) || isVideo(actionFile.type)) && (
-                  <SheetBtn icon="👁" label="Preview" onClick={() => { setPreviewFile(actionFile); setActionFile(null) }} />
+                  <SheetBtn icon="ðŸ‘" label="Preview" onClick={() => { setPreviewFile(actionFile); setActionFile(null) }} />
                 )}
-                <SheetBtn icon="✏️" label="Ganti Nama" onClick={() => { setRenameName(actionFile.name); setShowRenameDialog(true) }} />
-                <SheetBtn icon="🗑️" label="Pindah ke Sampah" onClick={() => trashFile(actionFile.id)} danger />
+                <SheetBtn icon="âœï¸" label="Ganti Nama" onClick={() => { setRenameName(actionFile.name); setShowRenameDialog(true) }} />
+                <SheetBtn icon="ðŸ—‘ï¸" label="Pindah ke Sampah" onClick={() => trashFile(actionFile.id)} danger />
               </>}
               {actionFile.isTrashed && <>
-                <SheetBtn icon="♻️" label="Pulihkan" onClick={() => restoreFile(actionFile.id)} />
-                <SheetBtn icon="🗑️" label="Hapus Permanen" onClick={() => deleteFile(actionFile.id)} danger />
+                <SheetBtn icon="â™»ï¸" label="Pulihkan" onClick={() => restoreFile(actionFile.id)} />
+                <SheetBtn icon="ðŸ—‘ï¸" label="Hapus Permanen" onClick={() => deleteFile(actionFile.id)} danger />
               </>}
             </div>
             <button className="gd-btn secondary" style={{margin:'8px 16px 16px'}} onClick={() => setActionFile(null)}>Tutup</button>
-          </div>
-        </div>
-      )}
-
-      {/* Action sheet (folder) - NEW */}
-      {actionFolder && !showFolderRenameDialog && (
-        <div className="gd-sheet-overlay" onClick={() => setActionFolder(null)}>
-          <div className="gd-sheet" onClick={e => e.stopPropagation()}>
-            <div className="gd-sheet-handle" />
-            <div className="gd-sheet-header">
-              <span style={{fontSize:28}}>📁</span>
-              <div>
-                <div className="gd-sheet-name">{actionFolder.name}</div>
-                <div className="gd-sheet-meta">Folder</div>
-              </div>
-            </div>
-            <div className="gd-sheet-actions">
-              <SheetBtn icon="✏️" label="Ganti Nama" onClick={() => { setFolderRenameName(actionFolder.name); setShowFolderRenameDialog(true) }} />
-              <SheetBtn icon="🗑️" label="Hapus Folder" onClick={() => deleteFolder(actionFolder.id)} danger />
-            </div>
-            <button className="gd-btn secondary" style={{margin:'8px 16px 16px'}} onClick={() => setActionFolder(null)}>Tutup</button>
           </div>
         </div>
       )}
@@ -524,13 +441,13 @@ export default function Gudang() {
           <div className="gd-preview-modal" onClick={e => e.stopPropagation()}>
             {/* Header */}
             <div className="gd-preview-header">
-              <button className="gd-icon-btn light" onClick={() => setPreviewFile(null)}>✕</button>
+              <button className="gd-icon-btn light" onClick={() => setPreviewFile(null)}>âœ•</button>
               <span className="gd-preview-name">{previewFile.name}</span>
               <div style={{display:'flex',gap:8}}>
                 <button className="gd-icon-btn light" onClick={() => toggleStar(previewFile.id)} title="Bintangi">
-                  {files.find(f=>f.id===previewFile.id)?.isStarred ? '⭐' : '☆'}
+                  {files.find(f=>f.id===previewFile.id)?.isStarred ? 'â­' : 'â˜†'}
                 </button>
-                <button className="gd-icon-btn light" onClick={() => downloadFile(previewFile)} title="Download">⬇</button>
+                <button className="gd-icon-btn light" onClick={() => downloadFile(previewFile)} title="Download">â¬‡</button>
               </div>
             </div>
 
@@ -550,12 +467,12 @@ export default function Gudang() {
                   className="gd-preview-nav prev"
                   disabled={previewIdx <= 0}
                   onClick={() => setPreviewFile(previewFiles[previewIdx - 1])}
-                >‹</button>
+                >â€¹</button>
                 <button
                   className="gd-preview-nav next"
                   disabled={previewIdx >= previewFiles.length - 1}
                   onClick={() => setPreviewFile(previewFiles[previewIdx + 1])}
-                >›</button>
+                >â€º</button>
               </>
             )}
 
@@ -574,7 +491,7 @@ export default function Gudang() {
   )
 }
 
-// ── Sub-components ──────────────────────────────────
+// â”€â”€ Sub-components â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function GridCard({ file, selected, onTap, onLongPress, onAction }) {
   const pressTimer = useRef()
@@ -604,21 +521,21 @@ function GridCard({ file, selected, onTap, onLongPress, onAction }) {
         ) : cat === 'video' ? (
           <>
             <video src={`${API}/files/${file.id}`} className="gd-thumb-img" preload="metadata" muted playsInline />
-            <div className="gd-play-badge">▶</div>
+            <div className="gd-play-badge">â–¶</div>
           </>
         ) : (
           <div className="gd-thumb-icon" style={{background: getColor(file.type, file.name)+'22', color: getColor(file.type, file.name)}}>
             {getIcon(file.type, file.name)}
           </div>
         )}
-        {selected && <div className="gd-check">✓</div>}
-        {file.isStarred && !selected && <div className="gd-star-badge">⭐</div>}
+        {selected && <div className="gd-check">âœ“</div>}
+        {file.isStarred && !selected && <div className="gd-star-badge">â­</div>}
       </div>
 
       {/* Info + action */}
       <div className="gd-card-info">
         <span className="gd-card-name">{file.name}</span>
-        <button className="gd-more-btn" onClick={e => { e.stopPropagation(); onAction() }}>⋮</button>
+        <button className="gd-more-btn" onClick={e => { e.stopPropagation(); onAction() }}>â‹®</button>
       </div>
       <span className="gd-card-meta">{formatSize(file.size)}</span>
     </div>
@@ -633,7 +550,7 @@ function ListRow({ file, selected, onTap, onSelect, onAction }) {
     <div className={`gd-row ${selected?'selected':''}`} onClick={onTap}>
       {/* Checkbox */}
       <button className={`gd-row-check ${selected?'on':''}`} onClick={e => { e.stopPropagation(); onSelect() }}>
-        {selected ? '✓' : ''}
+        {selected ? 'âœ“' : ''}
       </button>
 
       {/* Icon / thumb */}
@@ -642,7 +559,7 @@ function ListRow({ file, selected, onTap, onSelect, onAction }) {
           <img src={`${API}/files/${file.id}`} alt={file.name} className="gd-row-img" loading="lazy" onError={() => setImgError(true)} />
         ) : cat === 'video' ? (
           <div className="gd-row-icon" style={{background:'#8B5CF622',color:'#8B5CF6',position:'relative'}}>
-            🎬
+            ðŸŽ¬
           </div>
         ) : (
           <div className="gd-row-icon" style={{background:getColor(file.type,file.name)+'22', color:getColor(file.type,file.name)}}>
@@ -654,14 +571,14 @@ function ListRow({ file, selected, onTap, onSelect, onAction }) {
       {/* Name + meta */}
       <div className="gd-row-info">
         <span className="gd-row-name">{file.name}</span>
-        <span className="gd-row-meta">{formatSize(file.size)} · {formatDate(file.uploadedAt)}</span>
+        <span className="gd-row-meta">{formatSize(file.size)} Â· {formatDate(file.uploadedAt)}</span>
       </div>
 
       {/* Star */}
-      {file.isStarred && <span style={{flexShrink:0,fontSize:14}}>⭐</span>}
+      {file.isStarred && <span style={{flexShrink:0,fontSize:14}}>â­</span>}
 
       {/* More */}
-      <button className="gd-more-btn" onClick={e => { e.stopPropagation(); onAction() }}>⋮</button>
+      <button className="gd-more-btn" onClick={e => { e.stopPropagation(); onAction() }}>â‹®</button>
     </div>
   )
 }
@@ -685,7 +602,7 @@ function SheetBtn({ icon, label, onClick, danger }) {
   )
 }
 
-// ── All styles ────────────────────────────────────
+// â”€â”€ All styles â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function Styles() {
   return (
@@ -702,7 +619,7 @@ function Styles() {
         position: relative;
       }
 
-      /* ── Header ── */
+      /* â”€â”€ Header â”€â”€ */
       .gd-header {
         display: flex; align-items: center; gap: 8px;
         padding: 10px 12px;
@@ -723,7 +640,7 @@ function Styles() {
       .gd-icon-btn.active { color: #FF6B00; background: rgba(255,107,0,0.12); }
       .gd-icon-btn.light { color: #E2E8F0; }
 
-      /* ── Sort menu ── */
+      /* â”€â”€ Sort menu â”€â”€ */
       .gd-sort-menu {
         position: absolute; top: 52px; right: 12px; z-index: 200;
         background: #1E1E2E; border: 1px solid rgba(255,255,255,0.1);
@@ -737,7 +654,7 @@ function Styles() {
       .gd-sort-item.active { color: #FF6B00; }
       .gd-sort-item:hover { background: rgba(255,255,255,0.05); }
 
-      /* ── Search ── */
+      /* â”€â”€ Search â”€â”€ */
       .gd-search-row { padding: 10px 12px 0; flex-shrink: 0; }
       .gd-search-wrap {
         display: flex; align-items: center; gap: 8px;
@@ -750,7 +667,7 @@ function Styles() {
       .gd-search::placeholder { color: #64748B; }
       .gd-search-clear { background: none; border: none; color: #64748B; cursor: pointer; font-size: 14px; flex-shrink: 0; }
 
-      /* ── Folders ── */
+      /* â”€â”€ Folders â”€â”€ */
       .gd-folders {
         display: flex; gap: 8px; padding: 10px 12px 0;
         overflow-x: auto; flex-shrink: 0;
@@ -765,19 +682,15 @@ function Styles() {
         border-radius: 20px; color: #94A3B8;
         font-size: 13px; white-space: nowrap; cursor: pointer;
         transition: all 150ms;
-        user-select: none;
-        -webkit-user-select: none;
-        touch-action: manipulation;
       }
-      .gd-chip:active { transform: scale(0.96); }
       .gd-chip.active { background: rgba(255,107,0,0.15); border-color: rgba(255,107,0,0.3); color: #FF6B00; }
       .gd-chip.new { border-style: dashed; }
 
-      /* ── Banners ── */
+      /* â”€â”€ Banners â”€â”€ */
       .gd-banner { padding: 10px 14px; margin: 8px 12px 0; border-radius: 10px; font-size: 13px; cursor: pointer; flex-shrink: 0; }
       .gd-banner.error { background: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.25); color: #FCA5A5; }
 
-      /* ── Selection bar ── */
+      /* â”€â”€ Selection bar â”€â”€ */
       .gd-select-bar {
         display: flex; align-items: center; gap: 12px;
         padding: 8px 14px; background: rgba(255,107,0,0.1);
@@ -792,11 +705,11 @@ function Styles() {
       }
       .gd-select-bar button:hover { background: rgba(255,107,0,0.15); }
 
-      /* ── Scroll area ── */
+      /* â”€â”€ Scroll area â”€â”€ */
       .gd-scroll { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 0; }
       .gd-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #475569; padding: 48px 16px; text-align: center; font-size: 15px; }
 
-      /* ── Grid ── */
+      /* â”€â”€ Grid â”€â”€ */
       .gd-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
       @media (max-width: 360px) { .gd-grid { grid-template-columns: repeat(2, 1fr); } }
 
@@ -844,7 +757,7 @@ function Styles() {
       }
       .gd-card-meta { padding: 0 8px 6px; font-size: 11px; color: #475569; display: block; }
 
-      /* ── List ── */
+      /* â”€â”€ List â”€â”€ */
       .gd-list { display: flex; flex-direction: column; gap: 2px; }
       .gd-row {
         display: flex; align-items: center; gap: 10px;
@@ -874,7 +787,7 @@ function Styles() {
       .gd-row-name { display: block; font-size: 14px; color: #E2E8F0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .gd-row-meta { display: block; font-size: 11px; color: #64748B; margin-top: 2px; }
 
-      /* ── More button ── */
+      /* â”€â”€ More button â”€â”€ */
       .gd-more-btn {
         background: none; border: none; color: #64748B;
         width: 28px; height: 28px; border-radius: 6px;
@@ -884,7 +797,7 @@ function Styles() {
       }
       .gd-more-btn:hover { background: rgba(255,255,255,0.08); color: #E2E8F0; }
 
-      /* ── Bottom bar ── */
+      /* â”€â”€ Bottom bar â”€â”€ */
       .gd-bottom {
         display: flex; align-items: center; gap: 8px;
         padding: 10px 14px;
@@ -914,7 +827,7 @@ function Styles() {
       .gd-bottom-btn.active { color: #FF6B00; background: rgba(255,107,0,0.12); border-color: rgba(255,107,0,0.25); }
       .gd-bottom-btn.danger { color: #EF4444; background: rgba(239,68,68,0.1); border-color: rgba(239,68,68,0.2); }
 
-      /* ── Modals ── */
+      /* â”€â”€ Modals â”€â”€ */
       .modal-overlay {
         position: fixed; inset: 0;
         background: rgba(0,0,0,0.75);
@@ -964,7 +877,7 @@ function Styles() {
       .gd-btn.secondary { background: rgba(255,255,255,0.07); color: #94A3B8; }
       .gd-btn.secondary:disabled { opacity: 0.4; cursor: not-allowed; }
 
-      /* ── Action Sheet ── */
+      /* â”€â”€ Action Sheet â”€â”€ */
       .gd-sheet-overlay {
         position: fixed; inset: 0;
         background: rgba(0,0,0,0.6);
@@ -990,7 +903,7 @@ function Styles() {
       .gd-sheet-btn.danger { color: #EF4444; }
       .gd-sheet-btn-icon { font-size: 22px; }
 
-      /* ── Preview ── */
+      /* â”€â”€ Preview â”€â”€ */
       .gd-preview-overlay {
         position: fixed; inset: 0;
         background: #000;
