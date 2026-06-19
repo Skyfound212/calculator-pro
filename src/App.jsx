@@ -6,6 +6,7 @@ import CalculatorScientific from './pages/CalculatorScientific'
 import SkyRoom from './pages/SkyRoom'
 import Gudang from './pages/Gudang'
 import RuangKerja from './pages/RuangKerja'
+import InstallGuide from './pages/InstallGuide'
 
 function App() {
   const [showSplash, setShowSplash] = useState(true)
@@ -38,6 +39,7 @@ function App() {
         <Route path="/skyroom" element={<SkyRoom />} />
         <Route path="/gudang" element={<Gudang />} />
         <Route path="/ruang-kerja" element={<RuangKerja />} />
+        <Route path="/install" element={<InstallGuide />} />
       </Routes>
     </div>
   )
