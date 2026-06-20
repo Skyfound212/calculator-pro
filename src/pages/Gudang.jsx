@@ -481,6 +481,17 @@ export default function Gudang() {
       </div>
 
       {/* ── Bottom bar ── */}
+      {/* ── Floating back FAB ── */}
+      {view === 'files' && (
+        <button
+          className="gd-back-fab"
+          onClick={() => { setView('folders'); setCurrentFolder(null); setSelectedIds([]) }}
+          title="Kembali ke folder"
+        >
+          ‹
+        </button>
+      )}
+
       <div className="gd-bottom">
         {view === 'folders' ? (
           <button className="gd-fab" onClick={() => { setFolderName(''); setShowFolderDialog(true) }} title="Buat Folder">
@@ -1121,6 +1132,26 @@ function Styles() {
         transition: transform 150ms;
       }
       .gd-fab:hover { transform: scale(1.08); }
+      .gd-back-fab {
+        position: fixed;
+        right: 20px;
+        bottom: 80px;
+        width: 48px; height: 48px;
+        border-radius: 50%;
+        background: rgba(30,30,46,0.92);
+        border: 1px solid rgba(255,255,255,0.12);
+        color: #E2E8F0;
+        font-size: 28px;
+        line-height: 1;
+        cursor: pointer;
+        display: flex; align-items: center; justify-content: center;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        z-index: 90;
+        transition: transform 150ms, background 150ms;
+      }
+      .gd-back-fab:active { transform: scale(0.91); background: rgba(255,107,0,0.18); }
       .gd-bottom-btn {
         display: flex; align-items: center; gap: 6px;
         padding: 9px 16px;
