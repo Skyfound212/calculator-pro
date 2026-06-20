@@ -49,8 +49,8 @@ export default function Gudang() {
   const navigate = useNavigate()
 
   const [files, setFiles] = useState([])
-  const [folders, setFolders] = useState([{ id: 'root', name: 'Semua File', parentId: null }])
-  const [currentFolder, setCurrentFolder] = useState('root')
+  const [folders, setFolders] = useState([])
+  const [currentFolder, setCurrentFolder] = useState(null)
   const [viewMode, setViewMode] = useState('grid')
   const [sortBy, setSortBy] = useState('date')
   const [selectedIds, setSelectedIds] = useState([])
@@ -94,8 +94,18 @@ export default function Gudang() {
     setError(null)
     try {
       const [fr, folr] = await Promise.all([fetch(`${API}/files`), fetch(`${API}/folders`)])
-      if (fr.ok) setFiles(await fr.json())
-      if (folr.ok) setFolders(await folr.json())
+      const fileData = fr.ok ? await fr.json() : []
+      const folderData = folr.ok ? await folr.json() : []
+      if (fr.ok) setFiles(fileData)
+      const hasUncategorized = fileData.some(f => !f.folderId || f.folderId === 'root')
+      const allFolders = hasUncategorized
+        ? [...folderData, { id: '__none__', name: 'Tidak Berkategori', parentId: null }]
+        : folderData
+      setFolders(allFolders)
+      setCurrentFolder(prev => {
+        if (prev && allFolders.find(f => f.id === prev)) return prev
+        return allFolders[0]?.id || null
+      })
     } catch { setError('Gagal memuat data. Cek koneksi internet.') }
     finally { setLoading(false) }
   }, [])
@@ -111,7 +121,9 @@ export default function Gudang() {
     .filter(f => {
       if (showTrash) return f.isTrashed
       if (f.isTrashed) return false
-      if (currentFolder !== 'root' && f.folderId !== currentFolder) return false
+      if (currentFolder === '__none__') {
+        if (f.folderId && f.folderId !== 'root') return false
+      } else if (f.folderId !== currentFolder) return false
       if (searchQuery) return f.name.toLowerCase().includes(searchQuery.toLowerCase())
       return true
     })
@@ -189,7 +201,7 @@ export default function Gudang() {
   const deleteFolder = async (id) => {
     await fetch(`${API}/folders/${id}`, { method: 'DELETE' })
     setFolders(p => p.filter(f => f.id !== id))
-    if (currentFolder === id) setCurrentFolder('root')
+    if (currentFolder === id) setCurrentFolder(folders.find(f => f.id !== id)?.id || null)
     setActionFolder(null)
   }
 
@@ -246,7 +258,7 @@ export default function Gudang() {
   const clearSelect = () => setSelectedIds([])
   const toggleSelect = (id) => setSelectedIds(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id])
 
-  const currentFolderName = folders.find(f => f.id === currentFolder)?.name || 'Semua File'
+  const currentFolderName = folders.find(f => f.id === currentFolder)?.name || 'Pilih Folder'
 
   return (
     <div className="gd-root">
@@ -299,9 +311,9 @@ export default function Gudang() {
               key={f.id} 
               className={`gd-chip ${currentFolder===f.id?'active':''}`} 
               onClick={() => setCurrentFolder(f.id)}
-              onTouchStart={() => { folderPressTimer.current = setTimeout(() => { if (f.id !== 'root') setActionFolder(f) }, 500) }}
+              onTouchStart={() => { folderPressTimer.current = setTimeout(() => { if (f.id !== 'root' && f.id !== '__none__') setActionFolder(f) }, 500) }}
               onTouchEnd={() => clearTimeout(folderPressTimer.current)}
-              onMouseDown={() => { folderPressTimer.current = setTimeout(() => { if (f.id !== 'root') setActionFolder(f) }, 500) }}
+              onMouseDown={() => { folderPressTimer.current = setTimeout(() => { if (f.id !== 'root' && f.id !== '__none__') setActionFolder(f) }, 500) }}
               onMouseUp={() => clearTimeout(folderPressTimer.current)}
               onMouseLeave={() => clearTimeout(folderPressTimer.current)}
             >
