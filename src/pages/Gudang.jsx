@@ -56,6 +56,8 @@ export default function Gudang() {
   const [selectedIds, setSelectedIds] = useState([])
   const [showTrash, setShowTrash] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const [view, setView] = useState('folders')
+  const [movingFile, setMovingFile] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
@@ -220,7 +222,8 @@ export default function Gudang() {
   const createFolder = async () => {
     const name = folderName.trim() || 'Folder Baru'
     try {
-      const res = await fetch(`${API}/folders`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ name }) })
+      const parentId = view === 'files' ? currentFolder : null
+      const res = await fetch(`${API}/folders`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ name, parentId }) })
       if (res.ok) {
         const nf = await res.json()
         setFolders(p => [...p, nf])
@@ -254,19 +257,41 @@ export default function Gudang() {
     }
   }, [])
 
+  const moveFile = async (fileId, newFolderId) => {
+    try {
+      await fetch(`${API}/files/${fileId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderId: newFolderId })
+      })
+      setFiles(p => p.map(f => f.id === fileId ? { ...f, folderId: newFolderId } : f))
+    } catch { alert('Gagal memindahkan file.') }
+    setMovingFile(null)
+    setActionFile(null)
+  }
+
   const selectAll = () => setSelectedIds(visibleFiles.map(f => f.id))
   const clearSelect = () => setSelectedIds([])
   const toggleSelect = (id) => setSelectedIds(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id])
 
   const currentFolderName = folders.find(f => f.id === currentFolder)?.name || 'Pilih Folder'
+  const topFolders = folders.filter(f => !f.parentId)
+  const subFolders = currentFolder ? folders.filter(f => f.parentId === currentFolder) : []
+  const folderFileCounts = folders.reduce((acc, f) => {
+    acc[f.id] = files.filter(x => x.folderId === f.id && !x.isTrashed).length
+    return acc
+  }, {})
 
   return (
     <div className="gd-root">
       {/* ── Header ── */}
       <div className="gd-header">
-        <button className="gd-icon-btn" onClick={() => navigate('/skyroom')}>⬅</button>
+        <button className="gd-icon-btn" onClick={() => {
+          if (view === 'files') { setView('folders'); setCurrentFolder(null); setSelectedIds([]) }
+          else navigate('/skyroom')
+        }}>⬅</button>
         <div className="gd-header-title">
-          {showTrash ? '🗑️ Sampah' : currentFolderName}
+          {showTrash ? '🗑️ Sampah' : view === 'folders' ? '🗂️ Gudang' : currentFolderName}
         </div>
         <div className="gd-header-right">
           {selectedIds.length > 0 && (
@@ -303,17 +328,17 @@ export default function Gudang() {
         </div>
       </div>
 
-      {/* ── Folder chips ── */}
-      {!showTrash && (
+      {/* ── Subfolder chips (files view only) ── */}
+      {!showTrash && view === 'files' && subFolders.length > 0 && (
         <div className="gd-folders" ref={chipsRef} onScroll={e => { chipsScrollRef.current = e.currentTarget.scrollLeft }}>
-          {folders.map(f => (
-            <button 
-              key={f.id} 
-              className={`gd-chip ${currentFolder===f.id?'active':''}`} 
-              onClick={() => setCurrentFolder(f.id)}
-              onTouchStart={() => { folderPressTimer.current = setTimeout(() => { if (f.id !== 'root' && f.id !== '__none__') setActionFolder(f) }, 500) }}
+          {subFolders.map(f => (
+            <button
+              key={f.id}
+              className="gd-chip"
+              onClick={() => { setCurrentFolder(f.id) }}
+              onTouchStart={() => { folderPressTimer.current = setTimeout(() => { if (f.id !== '__none__') setActionFolder(f) }, 500) }}
               onTouchEnd={() => clearTimeout(folderPressTimer.current)}
-              onMouseDown={() => { folderPressTimer.current = setTimeout(() => { if (f.id !== 'root' && f.id !== '__none__') setActionFolder(f) }, 500) }}
+              onMouseDown={() => { folderPressTimer.current = setTimeout(() => { if (f.id !== '__none__') setActionFolder(f) }, 500) }}
               onMouseUp={() => clearTimeout(folderPressTimer.current)}
               onMouseLeave={() => clearTimeout(folderPressTimer.current)}
             >
@@ -321,7 +346,7 @@ export default function Gudang() {
             </button>
           ))}
           <button className="gd-chip new" onClick={() => { setFolderName(''); setShowFolderDialog(true) }}>
-            + Folder
+            + Subfolder
           </button>
         </div>
       )}
@@ -343,9 +368,44 @@ export default function Gudang() {
         </div>
       )}
 
+      {/* ── Folder cards view ── */}
+      {!showTrash && view === 'folders' && (
+        <div className="gd-scroll">
+          {loading && <div className="gd-empty"><span className="gd-spinner">⏳</span> Memuat...</div>}
+          {!loading && topFolders.length === 0 && (
+            <div className="gd-empty">
+              <div style={{fontSize:56}}>🗂️</div>
+              <div style={{marginTop:8}}>Belum ada folder</div>
+              <div style={{fontSize:13,color:'#8B92A8',marginTop:4}}>Tap tombol di bawah untuk buat folder pertama</div>
+            </div>
+          )}
+          {!loading && topFolders.length > 0 && (
+            <div className="gd-folder-grid">
+              {topFolders.map(f => (
+                <button
+                  key={f.id}
+                  className="gd-folder-card"
+                  onClick={() => { setCurrentFolder(f.id); setView('files') }}
+                  onTouchStart={() => { folderPressTimer.current = setTimeout(() => { if (f.id !== '__none__') setActionFolder(f) }, 600) }}
+                  onTouchEnd={() => clearTimeout(folderPressTimer.current)}
+                  onMouseDown={() => { folderPressTimer.current = setTimeout(() => { if (f.id !== '__none__') setActionFolder(f) }, 600) }}
+                  onMouseUp={() => clearTimeout(folderPressTimer.current)}
+                  onMouseLeave={() => clearTimeout(folderPressTimer.current)}
+                >
+                  <div className="gd-folder-icon">{f.id === '__none__' ? '📂' : '📁'}</div>
+                  <div className="gd-folder-name">{f.name}</div>
+                  <div className="gd-folder-meta">{folderFileCounts[f.id] || 0} file</div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ── File area ── */}
-      <div
+      {(showTrash || view === 'files') && <div
         className="gd-scroll"
+        style={{display: (!showTrash && view !== 'files') ? 'none' : undefined}}
         ref={scrollRef}
         onClick={() => { setShowSortMenu(false) }}
         onTouchStart={e => {
@@ -422,9 +482,15 @@ export default function Gudang() {
 
       {/* ── Bottom bar ── */}
       <div className="gd-bottom">
-        <button className="gd-fab" onClick={() => setShowUpload(true)} title="Upload">
-          ＋
-        </button>
+        {view === 'folders' ? (
+          <button className="gd-fab" onClick={() => { setFolderName(''); setShowFolderDialog(true) }} title="Buat Folder">
+            ＋
+          </button>
+        ) : (
+          <button className="gd-fab" onClick={() => setShowUpload(true)} title="Upload">
+            ＋
+          </button>
+        )}
         <button className={`gd-bottom-btn ${showTrash?'active':''}`} onClick={() => { setShowTrash(p=>!p); setSelectedIds([]) }}>
           🗑️ {showTrash ? 'Tutup' : 'Sampah'}
         </button>
@@ -542,6 +608,7 @@ export default function Gudang() {
                 {(isImage(actionFile.type) || isVideo(actionFile.type)) && (
                   <SheetBtn icon="👁" label="Preview" onClick={() => { setPreviewFile(actionFile); setActionFile(null) }} />
                 )}
+                <SheetBtn icon="📂" label="Pindah ke Folder" onClick={() => { setMovingFile(actionFile); setActionFile(null) }} />
                 <SheetBtn icon="✏️" label="Ganti Nama" onClick={() => { setRenameName(actionFile.name); setShowRenameDialog(true) }} />
                 <SheetBtn icon="🗑️" label="Pindah ke Sampah" onClick={() => trashFile(actionFile.id)} danger />
               </>}
@@ -551,6 +618,46 @@ export default function Gudang() {
               </>}
             </div>
             <button className="gd-btn secondary" style={{margin:'8px 16px 16px'}} onClick={() => setActionFile(null)}>Tutup</button>
+          </div>
+        </div>
+      )}
+
+      {/* Move file modal */}
+      {movingFile && (
+        <div className="gd-sheet-overlay" onClick={() => setMovingFile(null)}>
+          <div className="gd-sheet" onClick={e => e.stopPropagation()} style={{maxHeight:'70vh'}}>
+            <div className="gd-sheet-handle" />
+            <div className="gd-sheet-header">
+              <span style={{fontSize:28}}>📂</span>
+              <div>
+                <div className="gd-sheet-name">Pindahkan File</div>
+                <div className="gd-sheet-meta">{movingFile.name}</div>
+              </div>
+            </div>
+            <div style={{overflowY:'auto',flex:1,padding:'0 16px 8px'}}>
+              {topFolders.filter(f => f.id !== movingFile.folderId).map(f => (
+                <button
+                  key={f.id}
+                  onClick={() => moveFile(movingFile.id, f.id)}
+                  style={{
+                    display:'flex',alignItems:'center',gap:12,width:'100%',
+                    padding:'14px 12px',borderRadius:12,border:'none',
+                    background:'rgba(255,255,255,0.05)',color:'#E2E8F0',
+                    fontSize:15,marginBottom:8,cursor:'pointer',textAlign:'left'
+                  }}
+                >
+                  <span style={{fontSize:24}}>📁</span>
+                  <span>{f.name}</span>
+                  <span style={{marginLeft:'auto',fontSize:12,color:'#64748B'}}>{folderFileCounts[f.id]||0} file</span>
+                </button>
+              ))}
+              {topFolders.filter(f => f.id !== movingFile.folderId).length === 0 && (
+                <div style={{textAlign:'center',color:'#64748B',padding:'24px 0',fontSize:14}}>
+                  Tidak ada folder lain tersedia
+                </div>
+              )}
+            </div>
+            <button className="gd-btn secondary" style={{margin:'8px 16px 16px'}} onClick={() => setMovingFile(null)}>Batal</button>
           </div>
         </div>
       )}
@@ -1192,6 +1299,28 @@ function Styles() {
       .gd-btn { padding: 14px; border-radius: 14px; font-size: 15px; }
       .gd-btn:active { opacity: 0.8; }
       .gd-input { padding: 14px; border-radius: 12px; font-size: 16px; }
+
+      /* ── Folder grid ── */
+      .gd-folder-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        padding: 16px;
+      }
+      .gd-folder-card {
+        display: flex; flex-direction: column; align-items: center;
+        justify-content: center; gap: 8px;
+        background: rgba(255,255,255,0.05);
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 16px; padding: 20px 12px;
+        cursor: pointer; color: #E2E8F0;
+        transition: background 0.15s;
+        min-height: 110px;
+      }
+      .gd-folder-card:active { background: rgba(255,107,0,0.12); border-color: rgba(255,107,0,0.3); }
+      .gd-folder-icon { font-size: 40px; }
+      .gd-folder-name { font-size: 14px; font-weight: 600; text-align: center; word-break: break-word; }
+      .gd-folder-meta { font-size: 12px; color: #64748B; }
 
       /* ── In-App Preview ── */
       .gd-iap-center {
