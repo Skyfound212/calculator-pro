@@ -58,6 +58,8 @@ export default function Gudang() {
   const [searchQuery, setSearchQuery] = useState('')
   const [view, setView] = useState('folders')
   const [movingFile, setMovingFile] = useState(null)
+  const [dragState, setDragState] = useState(null)
+  const [dropTarget, setDropTarget] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
@@ -87,6 +89,9 @@ export default function Gudang() {
   const chipsRef = useRef()
   const chipsScrollRef = useRef(0)
   const pullStartY = useRef(0)
+  const ghostRef = useRef(null)
+  const dragStateRef = useRef(null)
+  const dragTimerRef = useRef(null)
   const [refreshing, setRefreshing] = useState(false)
   const [pullY, setPullY] = useState(0)
 
@@ -113,6 +118,37 @@ export default function Gudang() {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  useEffect(() => {
+    if (!dragState) return
+    const onMove = (e) => {
+      const t = e.touches[0]
+      if (ghostRef.current) {
+        ghostRef.current.style.left = (t.clientX - 80) + 'px'
+        ghostRef.current.style.top = (t.clientY - 36) + 'px'
+        ghostRef.current.style.opacity = '0'
+      }
+      const el = document.elementFromPoint(t.clientX, t.clientY)
+      if (ghostRef.current) ghostRef.current.style.opacity = '1'
+      const folderEl = el?.closest('[data-folderid]')
+      setDropTarget(folderEl ? folderEl.dataset.folderid : null)
+      if (e.cancelable) e.preventDefault()
+    }
+    const onEnd = (e) => {
+      const t = e.changedTouches[0]
+      if (ghostRef.current) ghostRef.current.style.opacity = '0'
+      const el = document.elementFromPoint(t.clientX, t.clientY)
+      const folderEl = el?.closest('[data-folderid]')
+      if (folderEl) executeDrop(folderEl.dataset.folderid)
+      else cancelDrag()
+    }
+    document.addEventListener('touchmove', onMove, { passive: false })
+    document.addEventListener('touchend', onEnd)
+    return () => {
+      document.removeEventListener('touchmove', onMove)
+      document.removeEventListener('touchend', onEnd)
+    }
+  }, [dragState, executeDrop, cancelDrag])
 
   useLayoutEffect(() => {
     if (chipsRef.current) chipsRef.current.scrollLeft = chipsScrollRef.current
@@ -270,6 +306,48 @@ export default function Gudang() {
     setActionFile(null)
   }
 
+  // ── Drag & Drop ─────────────────────────────────────────────────────────
+  const cancelDrag = useCallback(() => {
+    setDragState(null); setDropTarget(null)
+    dragStateRef.current = null
+    if (ghostRef.current) { ghostRef.current.remove(); ghostRef.current = null }
+  }, [])
+
+  const executeDrop = useCallback(async (targetFolderId) => {
+    const state = dragStateRef.current
+    if (!state || !targetFolderId) { cancelDrag(); return }
+    if (state.ids.includes(targetFolderId)) { cancelDrag(); return }
+    try {
+      if (state.type === 'file') {
+        await Promise.all(state.ids.map(id =>
+          fetch(`${API}/files/${id}`, {
+            method: 'PATCH', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ folderId: targetFolderId })
+          })
+        ))
+        setFiles(p => p.map(f => state.ids.includes(f.id) ? {...f, folderId: targetFolderId} : f))
+        if (state.ids.length > 1) setSelectedIds([])
+      } else {
+        await fetch(`${API}/folders/${state.ids[0]}`, {
+          method: 'PATCH', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ parentId: targetFolderId })
+        })
+        setFolders(p => p.map(f => f.id === state.ids[0] ? {...f, parentId: targetFolderId} : f))
+      }
+    } catch { alert('Gagal memindahkan.') }
+    cancelDrag()
+  }, [cancelDrag])
+
+  const beginTouchDrag = useCallback((type, ids, label, x, y) => {
+    const state = { type, ids, label }
+    setDragState(state); dragStateRef.current = state
+    const el = document.createElement('div')
+    el.className = 'gd-drag-ghost'
+    el.innerHTML = (type === 'file' ? '📄 ' : '📁 ') + label + (ids.length > 1 ? ` +${ids.length - 1}` : '')
+    el.style.left = (x - 80) + 'px'; el.style.top = (y - 36) + 'px'
+    document.body.appendChild(el); ghostRef.current = el
+  }, [])
+
   const selectAll = () => setSelectedIds(visibleFiles.map(f => f.id))
   const clearSelect = () => setSelectedIds([])
   const toggleSelect = (id) => setSelectedIds(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id])
@@ -334,8 +412,12 @@ export default function Gudang() {
           {subFolders.map(f => (
             <button
               key={f.id}
-              className="gd-chip"
+              data-folderid={f.id}
+              className={`gd-chip ${dropTarget===f.id?'drop-active':''}`}
               onClick={() => { setCurrentFolder(f.id) }}
+              onDragOver={e => { e.preventDefault(); setDropTarget(f.id) }}
+              onDragLeave={() => setDropTarget(null)}
+              onDrop={e => { e.preventDefault(); executeDrop(f.id) }}
               onTouchStart={() => { folderPressTimer.current = setTimeout(() => { if (f.id !== '__none__') setActionFolder(f) }, 500) }}
               onTouchEnd={() => clearTimeout(folderPressTimer.current)}
               onMouseDown={() => { folderPressTimer.current = setTimeout(() => { if (f.id !== '__none__') setActionFolder(f) }, 500) }}
@@ -384,10 +466,24 @@ export default function Gudang() {
               {topFolders.map(f => (
                 <button
                   key={f.id}
-                  className="gd-folder-card"
-                  onClick={() => { setCurrentFolder(f.id); setView('files') }}
-                  onTouchStart={() => { folderPressTimer.current = setTimeout(() => { if (f.id !== '__none__') setActionFolder(f) }, 600) }}
-                  onTouchEnd={() => clearTimeout(folderPressTimer.current)}
+                  className={`gd-folder-card ${dropTarget===f.id?'drop-active':''}`}
+                  data-folderid={f.id}
+                  draggable={f.id !== '__none__'}
+                  onClick={() => { if (!dragState) { setCurrentFolder(f.id); setView('files') } }}
+                  onDragStart={e => { e.dataTransfer.effectAllowed='move'; const state={type:'folder',ids:[f.id],label:f.name}; setDragState(state); dragStateRef.current=state }}
+                  onDragEnd={cancelDrag}
+                  onDragOver={e => { e.preventDefault(); setDropTarget(f.id) }}
+                  onDragLeave={() => setDropTarget(null)}
+                  onDrop={e => { e.preventDefault(); executeDrop(f.id) }}
+                  onTouchStart={e => {
+                    const touch = e.touches[0]; const tx=touch.clientX, ty=touch.clientY
+                    folderPressTimer.current = setTimeout(() => { if (f.id !== '__none__') setActionFolder(f) }, 600)
+                    dragTimerRef.current = setTimeout(() => {
+                      clearTimeout(folderPressTimer.current)
+                      if (f.id !== '__none__') beginTouchDrag('folder', [f.id], f.name, tx, ty)
+                    }, 800)
+                  }}
+                  onTouchEnd={() => { clearTimeout(folderPressTimer.current); clearTimeout(dragTimerRef.current) }}
                   onMouseDown={() => { folderPressTimer.current = setTimeout(() => { if (f.id !== '__none__') setActionFolder(f) }, 600) }}
                   onMouseUp={() => clearTimeout(folderPressTimer.current)}
                   onMouseLeave={() => clearTimeout(folderPressTimer.current)}
@@ -450,12 +546,24 @@ export default function Gudang() {
                   file={file}
                   selected={selectedIds.includes(file.id)}
                   onTap={() => {
+                    if (dragState) return
                     if (selectedIds.length > 0) { toggleSelect(file.id); return }
                     if (isImage(file.type) || isVideo(file.type)) setPreviewFile(file)
                     else openInAppPreview(file)
                   }}
                   onLongPress={() => toggleSelect(file.id)}
                   onAction={() => { setActionFile(file) }}
+                  onDragStart={() => {
+                    const ids = selectedIds.includes(file.id) && selectedIds.length > 1 ? selectedIds : [file.id]
+                    const state = {type:'file', ids, label: ids.length>1 ? `${ids.length} file` : file.name}
+                    setDragState(state); dragStateRef.current = state
+                  }}
+                  onDragEnd={cancelDrag}
+                  onTouchDragStart={(x, y) => {
+                    const ids = selectedIds.includes(file.id) && selectedIds.length > 1 ? selectedIds : [file.id]
+                    const label = ids.length > 1 ? `${ids.length} file` : file.name
+                    beginTouchDrag('file', ids, label, x, y)
+                  }}
                 />
               ))}
             </div>
@@ -467,12 +575,24 @@ export default function Gudang() {
                   file={file}
                   selected={selectedIds.includes(file.id)}
                   onTap={() => {
+                    if (dragState) return
                     if (selectedIds.length > 0) { toggleSelect(file.id); return }
                     if (isImage(file.type) || isVideo(file.type)) setPreviewFile(file)
                     else openInAppPreview(file)
                   }}
                   onSelect={() => toggleSelect(file.id)}
                   onAction={() => setActionFile(file)}
+                  onDragStart={() => {
+                    const ids = selectedIds.includes(file.id) && selectedIds.length > 1 ? selectedIds : [file.id]
+                    const state = {type:'file', ids, label: ids.length>1 ? `${ids.length} file` : file.name}
+                    setDragState(state); dragStateRef.current = state
+                  }}
+                  onDragEnd={cancelDrag}
+                  onTouchDragStart={(x, y) => {
+                    const ids = selectedIds.includes(file.id) && selectedIds.length > 1 ? selectedIds : [file.id]
+                    const label = ids.length > 1 ? `${ids.length} file` : file.name
+                    beginTouchDrag('file', ids, label, x, y)
+                  }}
                 />
               ))}
             </div>
@@ -481,6 +601,14 @@ export default function Gudang() {
       </div>
 
       {/* ── Bottom bar ── */}
+      {/* ── Drag indicator ── */}
+      {dragState && (
+        <div className="gd-drag-bar">
+          {dragState.type === 'file' ? '📄' : '📁'} <strong>{dragState.label}</strong> — seret ke folder tujuan
+          <button onClick={cancelDrag} style={{marginLeft:'auto',background:'none',border:'none',color:'#94A3B8',fontSize:16,cursor:'pointer',padding:'0 4px'}}>✕</button>
+        </div>
+      )}
+
       {/* ── Floating back FAB ── */}
       {view === 'files' && (
         <button
@@ -806,20 +934,33 @@ export default function Gudang() {
 
 // ── Sub-components ──────────────────────────────────
 
-function GridCard({ file, selected, onTap, onLongPress, onAction }) {
+function GridCard({ file, selected, onTap, onLongPress, onAction, onDragStart, onDragEnd, onTouchDragStart }) {
   const pressTimer = useRef()
+  const dragTimer = useRef()
   const [imgError, setImgError] = useState(false)
   const cat = getFileCategory(file.type, file.name)
 
-  const handleTouchStart = () => { pressTimer.current = setTimeout(onLongPress, 500) }
-  const handleTouchEnd = () => clearTimeout(pressTimer.current)
+  const handleTouchStart = (e) => {
+    const touch = e.touches[0]; const tx=touch.clientX, ty=touch.clientY
+    pressTimer.current = setTimeout(onLongPress, 500)
+    dragTimer.current = setTimeout(() => {
+      clearTimeout(pressTimer.current)
+      onTouchDragStart?.(tx, ty)
+    }, 750)
+  }
+  const handleTouchEnd = () => { clearTimeout(pressTimer.current); clearTimeout(dragTimer.current) }
+  const handleTouchMove = () => { clearTimeout(pressTimer.current); clearTimeout(dragTimer.current) }
 
   return (
     <div
       className={`gd-card ${selected?'selected':''}`}
+      draggable
+      onDragStart={e => { e.dataTransfer.effectAllowed='move'; onDragStart?.(e) }}
+      onDragEnd={onDragEnd}
       onClick={onTap}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
+      onTouchMove={handleTouchMove}
     >
       {/* Thumbnail area */}
       <div className="gd-card-thumb">
@@ -855,12 +996,22 @@ function GridCard({ file, selected, onTap, onLongPress, onAction }) {
   )
 }
 
-function ListRow({ file, selected, onTap, onSelect, onAction }) {
+function ListRow({ file, selected, onTap, onSelect, onAction, onDragStart, onDragEnd, onTouchDragStart }) {
   const cat = getFileCategory(file.type, file.name)
   const [imgError, setImgError] = useState(false)
+  const dragTimer = useRef()
 
   return (
-    <div className={`gd-row ${selected?'selected':''}`} onClick={onTap}>
+    <div
+      className={`gd-row ${selected?'selected':''}`}
+      draggable
+      onDragStart={e => { e.dataTransfer.effectAllowed='move'; onDragStart?.(e) }}
+      onDragEnd={onDragEnd}
+      onClick={onTap}
+      onTouchStart={e => { const t=e.touches[0]; dragTimer.current=setTimeout(()=>onTouchDragStart?.(t.clientX,t.clientY),750) }}
+      onTouchEnd={() => clearTimeout(dragTimer.current)}
+      onTouchMove={() => clearTimeout(dragTimer.current)}
+    >
       {/* Checkbox */}
       <button className={`gd-row-check ${selected?'on':''}`} onClick={e => { e.stopPropagation(); onSelect() }}>
         {selected ? '✓' : ''}
@@ -1330,6 +1481,36 @@ function Styles() {
       .gd-btn { padding: 14px; border-radius: 14px; font-size: 15px; }
       .gd-btn:active { opacity: 0.8; }
       .gd-input { padding: 14px; border-radius: 12px; font-size: 16px; }
+
+      /* ── Drag & Drop ── */
+      .gd-drag-ghost {
+        position: fixed; z-index: 9999; pointer-events: none;
+        background: rgba(255,107,0,0.92); color: #fff;
+        padding: 8px 16px; border-radius: 20px;
+        font-size: 14px; font-weight: 600;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+        max-width: 200px; white-space: nowrap; overflow: hidden;
+        text-overflow: ellipsis;
+        transition: opacity 0.1s;
+      }
+      .gd-folder-card.drop-active, .gd-chip.drop-active {
+        background: rgba(255,107,0,0.22) !important;
+        border-color: #FF6B00 !important;
+        transform: scale(1.04);
+        transition: transform 0.15s, background 0.15s;
+      }
+      .gd-card[draggable]:active, .gd-row[draggable]:active { opacity: 0.6; }
+      .gd-drag-bar {
+        position: fixed; bottom: 70px; left: 12px; right: 12px;
+        background: rgba(20,20,32,0.95);
+        border: 1px solid rgba(255,107,0,0.4);
+        border-radius: 14px; padding: 10px 14px;
+        display: flex; align-items: center; gap: 8px;
+        font-size: 13px; color: #CBD5E1;
+        z-index: 88;
+        backdrop-filter: blur(10px);
+        box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+      }
 
       /* ── Folder grid ── */
       .gd-folder-grid {
