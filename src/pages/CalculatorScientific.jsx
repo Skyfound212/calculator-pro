@@ -25,7 +25,6 @@ function CalculatorScientific() {
   const [memory, setMemory] = useState(memoryOperations.get())
   const [isRadians, setIsRadians] = useState(true)
   const [showHistory, setShowHistory] = useState(false)
-  const [showMenu, setShowMenu] = useState(false)
   const [history, setHistory] = useState(historyManager.get())
   const [parenStack, setParenStack] = useState(0)
   
@@ -296,12 +295,6 @@ function CalculatorScientific() {
 
   const toggleHistory = useCallback(() => {
     setShowHistory(prev => !prev)
-    setShowMenu(false)
-  }, [])
-  
-  const toggleMenu = useCallback(() => {
-    setShowMenu(prev => !prev)
-    setShowHistory(false)
   }, [])
   
   const goToBasic = useCallback(() => navigate('/'), [navigate])
@@ -355,7 +348,6 @@ function CalculatorScientific() {
     <div className="scientific-page">
       {/* Header */}
       <div className="sci-header">
-        <button className="sci-header-btn" onClick={toggleMenu}>☰</button>
         <div className="sci-mode-toggle">
           <span className="sci-mode-inactive" onClick={goToBasic}>Basic</span>
           <span className="sci-mode-active">Scientific</span>
@@ -439,30 +431,6 @@ function CalculatorScientific() {
         <CalcButton label="." onClick={inputDecimal} variant="function" />
         <CalcButton label="=" onClick={inputEquals} variant="equals" />
       </div>
-
-      {/* Menu Panel */}
-      {showMenu && (
-        <div className="sci-menu-panel animate-slide-up">
-          <div className="sci-menu-header">
-            <h3>Menu</h3>
-            <button onClick={() => setShowMenu(false)}>✕</button>
-          </div>
-          <div className="sci-menu-list">
-            <button onClick={() => { navigate('/skyroom'); setShowMenu(false) }}>
-              <span>🌌</span> Sky Room
-            </button>
-            <button onClick={() => { navigate('/gudang'); setShowMenu(false) }}>
-              <span>📦</span> Gudang
-            </button>
-            <button onClick={() => { navigate('/ruang-kerja'); setShowMenu(false) }}>
-              <span>📝</span> Ruang Kerja
-            </button>
-            <button onClick={() => { navigate('/'); setShowMenu(false) }}>
-              <span>🧮</span> Basic
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* History Panel */}
       {showHistory && (
@@ -675,67 +643,6 @@ function CalculatorScientific() {
 
         .sci-btn-sci:active {
           background: rgba(255, 107, 0, 0.3);
-        }
-
-        /* Menu Panel */
-        .sci-menu-panel {
-          position: absolute;
-          bottom: 0;
-          left: 0;
-          right: 0;
-          background: #1C1C1E;
-          border-radius: 24px 24px 0 0;
-          max-height: 60%;
-          z-index: 100;
-          animation: slideUp 300ms ease;
-        }
-
-        .sci-menu-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          padding: 14px 20px;
-          border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-        }
-
-        .sci-menu-header h3 {
-          color: #FFFFFF;
-          font-size: 16px;
-          margin: 0;
-        }
-
-        .sci-menu-header button {
-          background: none;
-          border: none;
-          color: #8E8E93;
-          font-size: 18px;
-          cursor: pointer;
-        }
-
-        .sci-menu-list {
-          padding: 8px 16px;
-        }
-
-        .sci-menu-list button {
-          width: 100%;
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          padding: 14px 16px;
-          background: none;
-          border: none;
-          color: #FFFFFF;
-          font-size: 16px;
-          cursor: pointer;
-          border-radius: 12px;
-        }
-
-        .sci-menu-list button:hover {
-          background: rgba(255, 255, 255, 0.05);
-        }
-
-        .sci-menu-list button span {
-          font-size: 20px;
         }
 
         .sci-history-panel {
