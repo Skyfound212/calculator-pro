@@ -19,7 +19,6 @@ function Calculator() {
   const [waitingForOperand, setWaitingForOperand] = useState(false)
   const [memory, setMemory] = useState(memoryOperations.get())
   const [showHistory, setShowHistory] = useState(false)
-  const [showMenu, setShowMenu] = useState(false)
   const [history, setHistory] = useState(historyManager.get())
   const [parenStack, setParenStack] = useState(0)
   
@@ -227,13 +226,6 @@ function Calculator() {
   // Toggle history panel
   const toggleHistory = useCallback(() => {
     setShowHistory(prev => !prev)
-    setShowMenu(false)
-  }, [])
-
-  // Toggle menu panel
-  const toggleMenu = useCallback(() => {
-    setShowMenu(prev => !prev)
-    setShowHistory(false)
   }, [])
 
   // Navigate to scientific mode
@@ -305,9 +297,6 @@ function Calculator() {
     <div className="calculator-page">
       {/* Header */}
       <div className="calc-header">
-        <button className="header-btn" onClick={toggleMenu}>
-          <span>☰</span>
-        </button>
         <div className="mode-toggle">
           <span className="mode-active">Basic</span>
           <span className="mode-inactive" onClick={goToScientific}>Scientific</span>
@@ -365,30 +354,6 @@ function Calculator() {
         <CalcButton label="." onClick={inputDecimal} variant="function" />
         <CalcButton label="=" onClick={inputEquals} variant="equals" />
       </div>
-
-      {/* Menu Panel (Slide-up) */}
-      {showMenu && (
-        <div className="menu-panel animate-slide-up">
-          <div className="menu-header">
-            <h3>Menu</h3>
-            <button onClick={() => setShowMenu(false)}>✕</button>
-          </div>
-          <div className="menu-list">
-            <button onClick={() => { navigate('/skyroom'); setShowMenu(false) }}>
-              <span>🌌</span> Sky Room
-            </button>
-            <button onClick={() => { navigate('/gudang'); setShowMenu(false) }}>
-              <span>📦</span> Gudang
-            </button>
-            <button onClick={() => { navigate('/ruang-kerja'); setShowMenu(false) }}>
-              <span>📝</span> Ruang Kerja
-            </button>
-            <button onClick={() => { navigate('/scientific'); setShowMenu(false) }}>
-              <span>🔬</span> Scientific
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* History Panel (Slide-up) */}
       {showHistory && (
@@ -587,67 +552,6 @@ function Calculator() {
           border-radius: 50px;
           justify-content: flex-start;
           padding-left: 28px;
-        }
-
-        /* Menu Panel */
-        .menu-panel {
-          position: absolute;
-          bottom: 0;
-          left: 0;
-          right: 0;
-          background: #1C1C1E;
-          border-radius: 24px 24px 0 0;
-          max-height: 60%;
-          z-index: 100;
-          animation: slideUp 300ms ease;
-        }
-
-        .menu-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          padding: 16px 24px;
-          border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-        }
-
-        .menu-header h3 {
-          color: #FFFFFF;
-          font-size: 18px;
-          margin: 0;
-        }
-
-        .menu-header button {
-          background: none;
-          border: none;
-          color: #8E8E93;
-          font-size: 18px;
-          cursor: pointer;
-        }
-
-        .menu-list {
-          padding: 8px 16px;
-        }
-
-        .menu-list button {
-          width: 100%;
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          padding: 14px 16px;
-          background: none;
-          border: none;
-          color: #FFFFFF;
-          font-size: 16px;
-          cursor: pointer;
-          border-radius: 12px;
-        }
-
-        .menu-list button:hover {
-          background: rgba(255, 255, 255, 0.05);
-        }
-
-        .menu-list button span {
-          font-size: 20px;
         }
 
         /* History Panel */
